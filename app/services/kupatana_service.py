@@ -279,7 +279,7 @@ class KupatanaService:
             db_service = DatabaseService(db_session)
         
         try:
-            while True:
+        while True:
                 # Check if stop flag is set
                 if self.should_stop:
                     logger.info("Stop flag detected. Stopping scraping operation.")
@@ -290,47 +290,47 @@ class KupatanaService:
                     logger.info(f"Reached maximum page limit ({max_pages}). Stopping pagination.")
                     break
                 
+            try:
+                # Construct URL
+                if page_num == 1:
+                    url = f"{self.base_url}/tz/search/real-estate"
+                else:
+                    url = f"{self.base_url}/tz/search/real-estate?page={page_num}"
+                
+                logger.info(f"Fetching page {page_num}... ({url})")
+                
                 try:
-                    # Construct URL
-                    if page_num == 1:
-                        url = f"{self.base_url}/tz/search/real-estate"
-                    else:
-                        url = f"{self.base_url}/tz/search/real-estate?page={page_num}"
+                    self.driver.get(url)
+                    self.wait_for_page_load()
+                except Exception as nav_error:
+                    logger.warning(f"Navigation warning on page {page_num}: {str(nav_error)[:100]}")
+                    # Continue anyway, page might have loaded partially
+                    time.sleep(3)
+                
+                # Parse page
+                soup = BeautifulSoup(self.driver.page_source, 'html.parser')
+                
+                # Check if this is a 404 page
+                if self.is_404_page(soup):
+                    consecutive_404_count += 1
+                    logger.info(f"⚠️  Page {page_num} returned 404. (Consecutive 404 count: {consecutive_404_count})")
                     
-                    logger.info(f"Fetching page {page_num}... ({url})")
+                    # If two consecutive pages are 404, stop
+                    if consecutive_404_count >= 2:
+                        logger.info(f"⚠️  Two consecutive pages returned 404. Stopping pagination.")
+                        break
                     
-                    try:
-                        self.driver.get(url)
-                        self.wait_for_page_load()
-                    except Exception as nav_error:
-                        logger.warning(f"Navigation warning on page {page_num}: {str(nav_error)[:100]}")
-                        # Continue anyway, page might have loaded partially
-                        time.sleep(3)
-                    
-                    # Parse page
-                    soup = BeautifulSoup(self.driver.page_source, 'html.parser')
-                    
-                    # Check if this is a 404 page
-                    if self.is_404_page(soup):
-                        consecutive_404_count += 1
-                        logger.info(f"⚠️  Page {page_num} returned 404. (Consecutive 404 count: {consecutive_404_count})")
-                        
-                        # If two consecutive pages are 404, stop
-                        if consecutive_404_count >= 2:
-                            logger.info(f"⚠️  Two consecutive pages returned 404. Stopping pagination.")
-                            break
-                        
-                        # Continue to next page to check if it's also 404
-                        page_num += 1
-                        continue
-                    else:
-                        # Reset counter if we get a valid page
-                        consecutive_404_count = 0
-                    
-                    # Find all listing cards
-                    listing_cards = soup.find_all('div', class_='product-list__item')
-                    
-                    if not listing_cards:
+                    # Continue to next page to check if it's also 404
+                    page_num += 1
+                    continue
+                else:
+                    # Reset counter if we get a valid page
+                    consecutive_404_count = 0
+                
+                # Find all listing cards
+                listing_cards = soup.find_all('div', class_='product-list__item')
+                
+                if not listing_cards:
                         logger.warning(f"No listings found on page {page_num}. Refreshing page and retrying...")
                         # Refresh the page and try again
                         self.driver.refresh()
@@ -364,84 +364,84 @@ class KupatanaService:
                             consecutive_no_new_count += 1
                             if consecutive_no_new_count >= 2:
                                 logger.info(f"⚠️  Two consecutive pages with no new listings. Stopping pagination.")
-                                break
+                    break
                             page_num += 1
                             continue
-                    
-                    # Extract data from each listing card
-                    page_listings = []
+                
+                # Extract data from each listing card
+                page_listings = []
                     new_listings_count = 0  # Track new listings on this page
                     for card in cards_to_process:
-                        try:
-                            # Extract URL
-                            link = card.find('a')
-                            if not link:
-                                continue
+                    try:
+                        # Extract URL
+                        link = card.find('a')
+                        if not link:
+                            continue
+                        
+                        href = link.get('href')
+                        if not href:
+                            continue
+                        
+                        full_url = href if href.startswith('http') else urljoin(self.base_url, href)
+                        
+                        # Extract title
+                        title_elem = card.find('h3', class_='product-item__title')
+                        title = title_elem.get_text(strip=True) if title_elem else 'N/A'
+                        
+                        # Extract price
+                        price_elem = card.find('div', class_='product-item__price')
+                        
+                        # Parse price and currency
+                        currency = None
+                        price_value = None
+                        
+                        if price_elem:
+                            # Get text and clean it up
+                            price_text = price_elem.get_text(strip=True)
                             
-                            href = link.get('href')
-                            if not href:
-                                continue
+                            # Extract currency
+                            if 'TZS' in price_text or 'TSh' in price_text:
+                                currency = 'TSh'
+                                price_text = price_text.replace('TZS', '').replace('TSh', '').strip()
+                            elif 'USD' in price_text:
+                                currency = 'USD'
+                                price_text = price_text.replace('USD', '').strip()
+                            elif '$' in price_text:
+                                currency = 'USD'
+                                price_text = price_text.replace('$', '').strip()
+                            elif '€' in price_text:
+                                currency = 'EUR'
+                                price_text = price_text.replace('€', '').strip()
                             
-                            full_url = href if href.startswith('http') else urljoin(self.base_url, href)
-                            
-                            # Extract title
-                            title_elem = card.find('h3', class_='product-item__title')
-                            title = title_elem.get_text(strip=True) if title_elem else 'N/A'
-                            
-                            # Extract price
-                            price_elem = card.find('div', class_='product-item__price')
-                            
-                            # Parse price and currency
-                            currency = None
-                            price_value = None
-                            
-                            if price_elem:
-                                # Get text and clean it up
-                                price_text = price_elem.get_text(strip=True)
-                                
-                                # Extract currency
-                                if 'TZS' in price_text or 'TSh' in price_text:
-                                    currency = 'TSh'
-                                    price_text = price_text.replace('TZS', '').replace('TSh', '').strip()
-                                elif 'USD' in price_text:
-                                    currency = 'USD'
-                                    price_text = price_text.replace('USD', '').strip()
-                                elif '$' in price_text:
-                                    currency = 'USD'
-                                    price_text = price_text.replace('$', '').strip()
-                                elif '€' in price_text:
-                                    currency = 'EUR'
-                                    price_text = price_text.replace('€', '').strip()
-                                
-                                # Try to parse numeric value
-                                try:
-                                    # Remove all spaces and get numeric value
-                                    price_cleaned = price_text.replace(' ', '').strip()
-                                    if price_cleaned:
-                                        price_value = float(price_cleaned)
-                                except:
-                                    pass
-                            
-                            listing_data = {
+                            # Try to parse numeric value
+                            try:
+                                # Remove all spaces and get numeric value
+                                price_cleaned = price_text.replace(' ', '').strip()
+                                if price_cleaned:
+                                    price_value = float(price_cleaned)
+                            except:
+                                pass
+                        
+                        listing_data = {
                                 'raw_url': full_url,
-                                'title': title,
-                                'price': price_value,
+                            'title': title,
+                            'price': price_value,
                                 'price_currency': currency,
                                 'source': 'kupatana'
-                            }
-                            
+                        }
+                        
                             # Check if this URL is new (not seen before)
                             if full_url not in seen_urls:
                                 seen_urls.add(full_url)
-                                page_listings.append(listing_data)
+                        page_listings.append(listing_data)
                                 new_listings_count += 1
                             else:
                                 logger.debug(f"Skipping duplicate listing: {full_url}")
-                            
-                        except Exception as e:
-                            logger.debug(f"Error extracting data from listing card: {e}")
-                            continue
-                    
+                        
+                    except Exception as e:
+                        logger.debug(f"Error extracting data from listing card: {e}")
+                        continue
+                
                     # Check if we found any new listings on this page
                     if new_listings_count == 0:
                         consecutive_no_new_count += 1
@@ -455,8 +455,8 @@ class KupatanaService:
                         # Reset counter if we found new listings
                         consecutive_no_new_count = 0
                     
-                    if page_listings:
-                        all_listings.extend(page_listings)
+                if page_listings:
+                    all_listings.extend(page_listings)
                         logger.info(f"✅ Page {page_num}: Found {new_listings_count} new listings, {len(page_listings)} total (Total: {len(all_listings)})")
                         
                         # Update scraping status
@@ -480,26 +480,26 @@ class KupatanaService:
                         
                         # Broadcast status update
                         self._broadcast_status()
-                    else:
+                else:
                         logger.warning(f"Page {page_num}: No valid listings extracted. Moving to next page.")
-                    
-                    # Random delay before next page
-                    time.sleep(random.uniform(2, 4))
-                    page_num += 1
-                    
-                except Exception as e:
-                    logger.error(f"Error on page {page_num}: {e}")
-                    # If we get an error, try one more page before giving up
-                    page_num += 1
-                    if page_num > 1000:  # Safety limit (very high to allow many pages)
-                        logger.warning("Reached safety limit (1000 pages). Stopping pagination.")
-                        break
-                    continue
-            
-            logger.info(f"✅ Scraped {len(all_listings)} listings from {page_num - 1} pages")
+                
+                # Random delay before next page
+                time.sleep(random.uniform(2, 4))
+                page_num += 1
+                
+            except Exception as e:
+                logger.error(f"Error on page {page_num}: {e}")
+                # If we get an error, try one more page before giving up
+                page_num += 1
+                if page_num > 1000:  # Safety limit (very high to allow many pages)
+                    logger.warning("Reached safety limit (1000 pages). Stopping pagination.")
+                    break
+                continue
+        
+        logger.info(f"✅ Scraped {len(all_listings)} listings from {page_num - 1} pages")
             if db_service:
                 logger.info(f"💾 Total saved to database: {total_saved} listings")
-            return all_listings
+        return all_listings
         finally:
             # Always reset scraping status and stop flag
             self.is_scraping = False
@@ -512,7 +512,7 @@ class KupatanaService:
                 self.scraping_status['status'] = 'completed'
             self.scraping_status['current_page'] = 0
             self._broadcast_status()
-            
+                
             logger.info("Scraping completed, status reset")
     
     def extract_phone_from_tel_link(self, soup: BeautifulSoup) -> List[str]:
@@ -592,8 +592,8 @@ class KupatanaService:
                 return {
                     'raw_url': url,
                     'error': 'Scraping was stopped',
-                    'scraped_at': datetime.now().isoformat()
-                }
+                'scraped_at': datetime.now().isoformat()
+            }
             
             # Extract title
             title_elem = soup.find('h1', class_='product-details__title')
@@ -781,7 +781,7 @@ class KupatanaService:
                     if len(cols) >= 2:
                         key = cols[0].get_text(strip=True)
                         value = cols[1].get_text(strip=True)
-                        if key and value:
+                            if key and value:
                             # Try to extract structured data
                             key_lower = key.lower()
                             value_lower = value.lower()
@@ -822,7 +822,7 @@ class KupatanaService:
                                         pass
                             
                             # Store all attributes
-                            attributes[key] = value
+                                attributes[key] = value
             
             # Also try to extract structured data from description if not found in attributes
             if description:
@@ -910,7 +910,7 @@ class KupatanaService:
                     district = location_parts[1]
                     if len(location_parts) >= 3:
                         region = location_parts[2]
-                    else:
+            else:
                         region = city  # Use city as region if not specified separately
                 elif len(location_parts) == 1:
                     city = location_parts[0]

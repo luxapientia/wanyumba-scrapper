@@ -175,7 +175,7 @@ def _scrape_all_with_details_task(
         # Step 2: Get URLs from database and scrape details
         db_service = DatabaseService(db)
         listings = db_service.get_all_listings(lightweight=True, target_site=target_site)
-        urls = [listing['url'] for listing in listings if 'url' in listing]
+        urls = [listing['rawUrl'] for listing in listings if 'rawUrl' in listing]
         
         # Scrape details
         _scrape_detailed_listings_task(urls, target_site)
@@ -398,15 +398,40 @@ def _scrape_all_details_task(
         # Get all listing URLs from database
         db_service = DatabaseService(db)
         listings = db_service.get_all_listings(lightweight=True, target_site=target_site)
-        urls = [listing['url'] for listing in listings if 'url' in listing]
         
-        if not urls:
+        if not listings:
             logger.warning(f"No listings found in database for {target_site}")
             return
         
-        logger.info(f"Found {len(urls)} listings in database for {target_site}. Starting to scrape details...")
+        # Filter listings: prioritize those without details (no agent_name)
+        listings_without_details = []
+        listings_with_details = []
         
-        # Scrape details for all URLs
+        for listing in listings:
+            if 'rawUrl' not in listing:
+                continue
+            
+            # Check if listing has details (agent_name is present and not empty)
+            has_details = listing.get('agentName') is not None and listing.get('agentName') != ''
+            
+            if has_details:
+                listings_with_details.append(listing['rawUrl'])
+            else:
+                listings_without_details.append(listing['rawUrl'])
+        
+        # Prioritize listings without details first
+        urls = listings_without_details + listings_with_details
+        
+        if not urls:
+            logger.warning(f"No valid URLs found in database for {target_site}")
+            return
+        
+        logger.info(f"Found {len(urls)} listings in database for {target_site}:")
+        logger.info(f"  - {len(listings_without_details)} without details (will be scraped first)")
+        logger.info(f"  - {len(listings_with_details)} with details (will be scraped after)")
+        logger.info(f"Starting to scrape details...")
+        
+        # Scrape details for all URLs (prioritized order)
         _scrape_detailed_listings_task(urls, target_site)
         
         logger.info(f"Completed scraping details for {target_site}")

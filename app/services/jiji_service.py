@@ -199,6 +199,20 @@ class JijiService:
             except Exception as e:
                 logger.error(f"Error closing browser: {e}")
     
+    def has_cloudflare_challenge(self) -> bool:
+        """Check if the current page has a Cloudflare challenge"""
+        try:
+            page_source = self.driver.page_source
+            # Check for common Cloudflare challenge indicators
+            if "Just a moment" in page_source or "Checking your browser" in page_source:
+                return True
+            if "Cloudflare" in page_source[:1000]:
+                return True
+            return False
+        except Exception as e:
+            logger.debug(f"Error checking for Cloudflare: {e}")
+            return False
+    
     def wait_for_cloudflare(self, timeout: int = 30):
         """Wait for Cloudflare challenge to complete"""
         logger.info("Waiting for Cloudflare challenge to complete...")
@@ -408,61 +422,62 @@ class JijiService:
             logger.warning(f"⚠️  No db_session provided - listings will not be saved to database")
         
         try:
-            while True:
+        while True:
                 # Check if stop flag is set
                 if self.should_stop:
                     logger.info("Stop flag detected. Stopping scraping operation.")
                     break
                 
-                # Check if we've reached max_pages limit
-                if max_pages and page_num > max_pages:
-                    logger.info(f"Reached maximum page limit ({max_pages}). Stopping pagination.")
-                    break
+            # Check if we've reached max_pages limit
+            if max_pages and page_num > max_pages:
+                logger.info(f"Reached maximum page limit ({max_pages}). Stopping pagination.")
+                break
+            
+            try:
+                # Construct URL
+                if page_num == 1:
+                    url = self.real_estate_url
+                else:
+                    url = f"{self.real_estate_url}?page={page_num}"
                 
-                try:
-                    # Construct URL
-                    if page_num == 1:
-                        url = self.real_estate_url
-                    else:
-                        url = f"{self.real_estate_url}?page={page_num}"
+                logger.info(f"Fetching page {page_num}... ({url})")
+                self.driver.get(url)
+                
+                # Check if Cloudflare challenge is present
+                if self.has_cloudflare_challenge():
+                    logger.info(f"Cloudflare challenge detected on page {page_num} - waiting for bypass...")
+                    cloudflare_bypassed = self.wait_for_cloudflare(timeout=30)
+                    if not cloudflare_bypassed:
+                        logger.warning("Cloudflare bypass may have failed, but continuing...")
+                else:
+                    logger.debug(f"No Cloudflare challenge on page {page_num}")
+                    time.sleep(2)  # Brief wait for page stability
+                
+                # Parse page
+                soup = BeautifulSoup(self.driver.page_source, 'html.parser')
+                
+                # Check if this is a 404 page
+                if self.is_404_page(soup):
+                    consecutive_404_count += 1
+                    logger.info(f"⚠️  Page {page_num} returned 404. (Consecutive 404 count: {consecutive_404_count})")
                     
-                    logger.info(f"Fetching page {page_num}... ({url})")
-                    self.driver.get(url)
+                    # If two consecutive pages are 404, stop
+                    if consecutive_404_count >= 2:
+                        logger.info(f"⚠️  Two consecutive pages returned 404. Stopping pagination.")
+                        break
+                    
+                    # Continue to next page to check if it's also 404
+                    page_num += 1
+                    continue
+                else:
+                    # Reset counter if we get a valid page
+                    consecutive_404_count = 0
 
-                    # For the first page, wait for Cloudflare challenge to complete
-                    if page_num == 1:
-                        logger.info("First page detected - waiting for Cloudflare bypass...")
-                        cloudflare_bypassed = self.wait_for_cloudflare(timeout=30)
-                        if not cloudflare_bypassed:
-                            logger.warning("Cloudflare bypass may have failed, but continuing...")
-                        # Wait a bit more to ensure page is fully loaded
-                        time.sleep(3)
-
-                    # Parse page
-                    soup = BeautifulSoup(self.driver.page_source, 'html.parser')
-                    
-                    # Check if this is a 404 page
-                    if self.is_404_page(soup):
-                        consecutive_404_count += 1
-                        logger.info(f"⚠️  Page {page_num} returned 404. (Consecutive 404 count: {consecutive_404_count})")
-                        
-                        # If two consecutive pages are 404, stop
-                        if consecutive_404_count >= 2:
-                            logger.info(f"⚠️  Two consecutive pages returned 404. Stopping pagination.")
-                            break
-                        
-                        # Continue to next page to check if it's also 404
-                        page_num += 1
-                        continue
-                    else:
-                        # Reset counter if we get a valid page
-                        consecutive_404_count = 0
-
-                    
-                    # Find all listing cards
-                    listing_cards = soup.find_all('a', class_='b-list-advert-base')
-                    
-                    if not listing_cards:
+                
+                # Find all listing cards
+                listing_cards = soup.find_all('a', class_='b-list-advert-base')
+                
+                if not listing_cards:
                         logger.warning(f"No listings found on page {page_num}. Refreshing page and retrying...")
                         # Refresh the page and try again
                         self.driver.refresh()
@@ -477,17 +492,17 @@ class JijiService:
                             continue
                         else:
                             logger.info(f"Found {len(listing_cards)} listings after refresh on page {page_num}")
-                    
-                    # Extract data from each listing card
-                    page_listings = []
-                    for card in listing_cards:
-                        try:
-                            # Extract URL
-                            href = card.get('href')
-                            if not href:
-                                continue
-                            
-                            full_url = href if href.startswith('http') else f"{self.base_url}{href}"
+                
+                # Extract data from each listing card
+                page_listings = []
+                for card in listing_cards:
+                    try:
+                        # Extract URL
+                        href = card.get('href')
+                        if not href:
+                            continue
+                        
+                        full_url = href if href.startswith('http') else f"{self.base_url}{href}"
                             
                             # Remove all query parameters from URL
                             parsed_url = urlparse(full_url)
@@ -500,77 +515,77 @@ class JijiService:
                                 '',  # Remove query string
                                 ''   # Remove fragment
                             ))
+                        
+                        # Extract title
+                        title_elem = card.find('div', class_='b-list-advert__item-title')
+                        if not title_elem:
+                            # Try alternative selector
+                            title_elem = card.find('div', class_='b-advert-title-inner')
+                        if not title_elem:
+                            title_elem = card.find('h3')
+                        
+                        title = title_elem.get_text(strip=True) if title_elem else 'N/A'
+                        
+                        # Extract price
+                        # The price is in div.qa-advert-price with currency and amount on separate lines
+                        price_elem = card.find('div', class_='qa-advert-price')
+                        if not price_elem:
+                            # Try alternative selectors
+                            price_elem = card.find('div', class_='b-list-advert__item-price')
+                        if not price_elem:
+                            price_elem = card.find('div', class_='b-advert-price')
+                        if not price_elem:
+                            price_elem = card.find('span', class_='qa-advert-price-view-value')
+                        
+                        # Parse price and currency
+                        currency = None
+                        price_value = None
+                        
+                        if price_elem:
+                            # Get text and clean it up (remove extra whitespace, join lines)
+                            price_text = price_elem.get_text(separator=' ', strip=True)
+                            # Clean up multiple spaces
+                            price_text = ' '.join(price_text.split())
                             
-                            # Extract title
-                            title_elem = card.find('div', class_='b-list-advert__item-title')
-                            if not title_elem:
-                                # Try alternative selector
-                                title_elem = card.find('div', class_='b-advert-title-inner')
-                            if not title_elem:
-                                title_elem = card.find('h3')
+                            # Extract currency
+                            if 'TSh' in price_text or 'TZS' in price_text:
+                                currency = 'TSh'
+                                price_text = price_text.replace('TSh', '').replace('TZS', '').strip()
+                            elif 'USD' in price_text:
+                                currency = 'USD'
+                                price_text = price_text.replace('USD', '').strip()
+                            elif '$' in price_text:
+                                currency = 'USD'
+                                price_text = price_text.replace('$', '').strip()
+                            elif '€' in price_text:
+                                currency = 'EUR'
+                                price_text = price_text.replace('€', '').strip()
                             
-                            title = title_elem.get_text(strip=True) if title_elem else 'N/A'
-                            
-                            # Extract price
-                            # The price is in div.qa-advert-price with currency and amount on separate lines
-                            price_elem = card.find('div', class_='qa-advert-price')
-                            if not price_elem:
-                                # Try alternative selectors
-                                price_elem = card.find('div', class_='b-list-advert__item-price')
-                            if not price_elem:
-                                price_elem = card.find('div', class_='b-advert-price')
-                            if not price_elem:
-                                price_elem = card.find('span', class_='qa-advert-price-view-value')
-                            
-                            # Parse price and currency
-                            currency = None
-                            price_value = None
-                            
-                            if price_elem:
-                                # Get text and clean it up (remove extra whitespace, join lines)
-                                price_text = price_elem.get_text(separator=' ', strip=True)
-                                # Clean up multiple spaces
-                                price_text = ' '.join(price_text.split())
-                                
-                                # Extract currency
-                                if 'TSh' in price_text or 'TZS' in price_text:
-                                    currency = 'TSh'
-                                    price_text = price_text.replace('TSh', '').replace('TZS', '').strip()
-                                elif 'USD' in price_text:
-                                    currency = 'USD'
-                                    price_text = price_text.replace('USD', '').strip()
-                                elif '$' in price_text:
-                                    currency = 'USD'
-                                    price_text = price_text.replace('$', '').strip()
-                                elif '€' in price_text:
-                                    currency = 'EUR'
-                                    price_text = price_text.replace('€', '').strip()
-                                
-                                # Try to parse numeric value
-                                try:
-                                    price_cleaned = price_text.replace(',', '').replace(' ', '').strip()
-                                    if price_cleaned:
-                                        price_value = float(price_cleaned)
-                                except:
-                                    pass
-                            
-                            listing_data = {
+                            # Try to parse numeric value
+                            try:
+                                price_cleaned = price_text.replace(',', '').replace(' ', '').strip()
+                                if price_cleaned:
+                                    price_value = float(price_cleaned)
+                            except:
+                                pass
+                        
+                        listing_data = {
                                 'raw_url': full_url,
-                                'title': title,
-                                'price': price_value,
+                            'title': title,
+                            'price': price_value,
                                 'price_currency': currency,
                                 'source': 'jiji'
-                            }
-                            
-                            page_listings.append(listing_data)
-                            
-                        except Exception as e:
-                            logger.debug(f"Error extracting data from listing card: {e}")
-                            continue
-                    
-                    if page_listings:
-                        all_listings.extend(page_listings)
-                        logger.info(f"✅ Page {page_num}: Found {len(page_listings)} listings (Total: {len(all_listings)})")
+                        }
+                        
+                        page_listings.append(listing_data)
+                        
+                    except Exception as e:
+                        logger.debug(f"Error extracting data from listing card: {e}")
+                        continue
+                
+                if page_listings:
+                    all_listings.extend(page_listings)
+                    logger.info(f"✅ Page {page_num}: Found {len(page_listings)} listings (Total: {len(all_listings)})")
                         
                         # Update scraping status
                         self.scraping_status['current_page'] = page_num
@@ -599,25 +614,25 @@ class JijiService:
                         
                         # Broadcast status update
                         self._broadcast_status()
-                    else:
-                        logger.warning(f"No valid listings extracted from page {page_num}. Stopping pagination.")
-                        break
-                    
-                    page_num += 1
-                    
-                except Exception as e:
-                    logger.error(f"Error on page {page_num}: {e}")
-                    # If we get an error, try one more page before giving up
-                    page_num += 1
-                    if page_num > 1000:  # Safety limit (very high to allow many pages)
-                        logger.warning("Reached safety limit (1000 pages). Stopping pagination.")
-                        break
-                    continue
-            
-            logger.info(f"✅ Scraped {len(all_listings)} listings from {page_num - 1} pages")
+                else:
+                    logger.warning(f"No valid listings extracted from page {page_num}. Stopping pagination.")
+                    break
+                
+                page_num += 1
+                
+            except Exception as e:
+                logger.error(f"Error on page {page_num}: {e}")
+                # If we get an error, try one more page before giving up
+                page_num += 1
+                if page_num > 1000:  # Safety limit (very high to allow many pages)
+                    logger.warning("Reached safety limit (1000 pages). Stopping pagination.")
+                    break
+                continue
+        
+        logger.info(f"✅ Scraped {len(all_listings)} listings from {page_num - 1} pages")
             if db_service:
                 logger.info(f"💾 Total saved to database: {total_saved} listings")
-            return all_listings
+        return all_listings
         finally:
             # Always reset scraping status and stop flag
             self.is_scraping = False
@@ -672,12 +687,15 @@ class JijiService:
             logger.info(f"Scraping: {listing_url}")
             self.driver.get(listing_url)
             
-            # For the first URL, wait for Cloudflare challenge to complete
-            if current_index == 1:
-                logger.info("First URL detected - waiting for Cloudflare bypass...")
+            # Check if Cloudflare challenge is present
+            if self.has_cloudflare_challenge():
+                logger.info(f"Cloudflare challenge detected - waiting for bypass...")
                 cloudflare_bypassed = self.wait_for_cloudflare(timeout=30)
                 if not cloudflare_bypassed:
                     logger.warning("Cloudflare bypass may have failed, but continuing...")
+            else:
+                logger.debug(f"No Cloudflare challenge detected")
+                time.sleep(1)  # Brief wait for page stability
             
             # Check if stop flag is set after page load
             if self.should_stop:
@@ -933,97 +951,97 @@ class JijiService:
                     # Return data collected so far
                     pass
                 else:
-                    # Find all show contact buttons (there might be multiple)
-                    # Note: Can be <a> or <div> elements, so we don't specify element type
-                    contact_buttons = self.driver.find_elements(By.CSS_SELECTOR, ".qa-show-contact, .js-show-contact")
-                    
-                    if not contact_buttons:
-                        logger.warning("No 'Show contact' button found")
-                    else:
-                        # Try to click the first visible button
-                        clicked = False
-                        for idx, button in enumerate(contact_buttons):
+                # Find all show contact buttons (there might be multiple)
+                # Note: Can be <a> or <div> elements, so we don't specify element type
+                contact_buttons = self.driver.find_elements(By.CSS_SELECTOR, ".qa-show-contact, .js-show-contact")
+                
+                if not contact_buttons:
+                    logger.warning("No 'Show contact' button found")
+                else:
+                    # Try to click the first visible button
+                    clicked = False
+                    for idx, button in enumerate(contact_buttons):
+                        try:
+                            # Scroll to button
+                            self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", button)
+                            time.sleep(0.5)
+                            
+                            # Try regular click first
                             try:
-                                # Scroll to button
-                                self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", button)
-                                time.sleep(0.5)
-                                
-                                # Try regular click first
-                                try:
-                                    button.click()
-                                    clicked = True
-                                    logger.info(f"Clicked 'Show contact' button #{idx + 1}")
-                                    break
-                                except:
-                                    # If regular click fails, try JavaScript click
-                                    self.driver.execute_script("arguments[0].click();", button)
-                                    clicked = True
-                                    logger.info(f"Clicked 'Show contact' button #{idx + 1} (via JavaScript)")
-                                    break
-                            except Exception as e:
-                                logger.debug(f"Could not click button #{idx + 1}: {e}")
-                                continue
-                        
-                        if clicked:
+                                button.click()
+                                clicked = True
+                                logger.info(f"Clicked 'Show contact' button #{idx + 1}")
+                                break
+                            except:
+                                # If regular click fails, try JavaScript click
+                                self.driver.execute_script("arguments[0].click();", button)
+                                clicked = True
+                                logger.info(f"Clicked 'Show contact' button #{idx + 1} (via JavaScript)")
+                                break
+                        except Exception as e:
+                            logger.debug(f"Could not click button #{idx + 1}: {e}")
+                            continue
+                    
+                    if clicked:
                             # Check stop flag before waiting
                             if self.should_stop:
                                 logger.info("Stop flag detected. Skipping phone extraction.")
                             else:
-                                # Wait for phone numbers to appear
-                                time.sleep(2)
-                                
+                        # Wait for phone numbers to appear
+                        time.sleep(2)
+                        
                                 # Check stop flag again after wait
                                 if self.should_stop:
                                     logger.info("Stop flag detected. Stopping phone extraction.")
                                 else:
-                                    # Get updated HTML after clicking
-                                    soup = BeautifulSoup(self.driver.page_source, 'html.parser')
-                                    
-                                    # Extract all phone numbers from the popover
-                                    phone_numbers = []
-                                    
-                                    # Method 1: Find all phone divs in the popover (multiple phones)
-                                    phone_divs = soup.find_all('div', class_='b-show-contacts-popover-item__phone')
-                                    for phone_div in phone_divs:
-                                        phone = phone_div.get_text(strip=True)
-                                        if phone and phone not in phone_numbers:
-                                            phone_numbers.append(phone)
-                                    
-                                    # Method 2: Single phone with qa-show-contact-phone class
-                                    if not phone_numbers:
-                                        phone_spans = soup.find_all(['span', 'div'], class_='qa-show-contact-phone')
-                                        for phone_span in phone_spans:
-                                            phone = phone_span.get_text(strip=True)
-                                            # Validate it's a phone number (starts with 0 and has 9+ digits)
-                                            if phone and re.match(r'^0\d{9,}$', phone):
-                                                if phone not in phone_numbers:
-                                                    phone_numbers.append(phone)
-                                                    logger.info(f"Found single phone via qa-show-contact-phone: {phone}")
-                                    
-                                    # Method 3: Find phone links with tel: href
-                                    if not phone_numbers:
-                                        phone_links = soup.find_all('a', {'href': lambda x: x and 'tel:' in x if x else False})
-                                        for phone_link in phone_links:
-                                            phone = phone_link.get('href').replace('tel:', '').strip()
-                                            if phone and re.match(r'^0\d{9,}$', phone):
-                                                if phone not in phone_numbers:
-                                                    phone_numbers.append(phone)
-                                                    logger.info(f"Found phone via tel: link: {phone}")
-                                    
-                                    # Method 4: Try alternative selector
-                                    if not phone_numbers:
-                                        alt_phone_divs = soup.find_all('div', class_='b-seller-contacts__phone')
-                                        for alt_div in alt_phone_divs:
-                                            phone = alt_div.get_text(strip=True)
-                                            if phone and re.match(r'^0\d{9,}$', phone):
-                                                if phone not in phone_numbers:
-                                                    phone_numbers.append(phone)
-                                    
-                                    if phone_numbers:
-                                        contact_phone = phone_numbers
-                                        logger.info(f"✅ Extracted {len(phone_numbers)} phone number(s): {', '.join(phone_numbers)}")
-                                    else:
-                                        logger.warning("No phone numbers found after clicking")
+                        # Get updated HTML after clicking
+                        soup = BeautifulSoup(self.driver.page_source, 'html.parser')
+                        
+                        # Extract all phone numbers from the popover
+                        phone_numbers = []
+                        
+                        # Method 1: Find all phone divs in the popover (multiple phones)
+                        phone_divs = soup.find_all('div', class_='b-show-contacts-popover-item__phone')
+                        for phone_div in phone_divs:
+                            phone = phone_div.get_text(strip=True)
+                            if phone and phone not in phone_numbers:
+                                phone_numbers.append(phone)
+                        
+                        # Method 2: Single phone with qa-show-contact-phone class
+                        if not phone_numbers:
+                            phone_spans = soup.find_all(['span', 'div'], class_='qa-show-contact-phone')
+                            for phone_span in phone_spans:
+                                phone = phone_span.get_text(strip=True)
+                                # Validate it's a phone number (starts with 0 and has 9+ digits)
+                                if phone and re.match(r'^0\d{9,}$', phone):
+                                    if phone not in phone_numbers:
+                                        phone_numbers.append(phone)
+                                        logger.info(f"Found single phone via qa-show-contact-phone: {phone}")
+                        
+                        # Method 3: Find phone links with tel: href
+                        if not phone_numbers:
+                            phone_links = soup.find_all('a', {'href': lambda x: x and 'tel:' in x if x else False})
+                            for phone_link in phone_links:
+                                phone = phone_link.get('href').replace('tel:', '').strip()
+                                if phone and re.match(r'^0\d{9,}$', phone):
+                                    if phone not in phone_numbers:
+                                        phone_numbers.append(phone)
+                                        logger.info(f"Found phone via tel: link: {phone}")
+                        
+                        # Method 4: Try alternative selector
+                        if not phone_numbers:
+                            alt_phone_divs = soup.find_all('div', class_='b-seller-contacts__phone')
+                            for alt_div in alt_phone_divs:
+                                phone = alt_div.get_text(strip=True)
+                                if phone and re.match(r'^0\d{9,}$', phone):
+                                    if phone not in phone_numbers:
+                                        phone_numbers.append(phone)
+                        
+                        if phone_numbers:
+                            contact_phone = phone_numbers
+                            logger.info(f"✅ Extracted {len(phone_numbers)} phone number(s): {', '.join(phone_numbers)}")
+                        else:
+                            logger.warning("No phone numbers found after clicking")
                         
             except Exception as e:
                 logger.warning(f"Error during phone extraction: {e}")
