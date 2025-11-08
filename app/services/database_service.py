@@ -38,10 +38,10 @@ class DatabaseService:
         ).first()
         
         if existing:
-            # Check if property_type is in the data to determine update strategy
-            has_property_type = 'property_type' in data and data.get('property_type') is not None
+            # Check if contact_name is in the data to determine update strategy
+            has_contact_name = 'contact_name' in data and data.get('contact_name') is not None
             
-            if has_property_type:
+            if has_contact_name:
                 # Full update: Update all fields with data passed by parameter
                 updated_listing = RealEstateListing.from_scraper_data(data, target_site)
                 

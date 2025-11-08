@@ -90,7 +90,6 @@ def _scrape_detailed_listings_task(
         }
         scraper._broadcast_status()
         
-        db_service = DatabaseService(db)
         total_urls = len(urls)
         
         for index, url in enumerate(urls, 1):
@@ -104,7 +103,13 @@ def _scrape_detailed_listings_task(
                 break
             
             try:
-                data = scraper.extract_detailed_data(url, total_urls=total_urls, current_index=index)
+                data = scraper.extract_detailed_data(
+                    url, 
+                    total_urls=total_urls, 
+                    current_index=index,
+                    db_session=db,
+                    target_site=target_site
+                )
                 
                 # Update progress after extraction
                 scraper.scraping_status['urls_scraped'] = index
@@ -120,9 +125,9 @@ def _scrape_detailed_listings_task(
                         scraper._broadcast_status()
                     break
                 
+                # Data is already saved in extract_detailed_data if db_session was provided
                 if data and 'error' not in data:
-                    db_service.create_or_update_listing(data, target_site)
-                    logger.info(f"Saved listing: {url} ({index}/{total_urls})")
+                    logger.info(f"Processed listing: {url} ({index}/{total_urls})")
             except Exception as e:
                 logger.error(f"Error scraping {url}: {e}")
                 import traceback
@@ -307,8 +312,12 @@ async def scrape_detailed_listings(
             detailed_listings = []
             for url in request.urls:
                 try:
-                    data = scraper.extract_detailed_data(url)
-                    if data:
+                    data = scraper.extract_detailed_data(
+                        url,
+                        db_session=db,
+                        target_site=request.target_site
+                    )
+                    if data and 'error' not in data:
                         detailed_listings.append(data)
                 except Exception as e:
                     logger.error(f"Error scraping {url}: {e}")

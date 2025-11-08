@@ -5,7 +5,6 @@ Service for scraping real estate listings from kupatana.com
 
 import time
 import logging
-import json
 import re
 import random
 from datetime import datetime
@@ -13,11 +12,8 @@ from typing import List, Dict, Optional
 from urllib.parse import urljoin
 import os
 
-from selenium import webdriver
-from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.common.exceptions import TimeoutException
 from bs4 import BeautifulSoup
 import undetected_chromedriver as uc
 
@@ -46,7 +42,6 @@ class KupatanaService:
         self.headless = headless
         self.profile_dir = profile_dir or "./kupatana_browser_profile"  # Default profile directory
         self.driver = None
-        self.detailed_listings = []
         self.is_scraping = False  # Track if currently scraping
         self.should_stop = False  # Flag to stop scraping gracefully
         self.scraping_status = {
@@ -271,8 +266,10 @@ class KupatanaService:
         
         logger.info("Starting to scrape all listings (url, title, price) from all pages...")
         all_listings = []
+        seen_urls = set()  # Track URLs we've already seen to detect duplicates
         page_num = 1
         consecutive_404_count = 0  # Track consecutive 404 pages
+        consecutive_no_new_count = 0  # Track consecutive pages with no new listings
         total_saved = 0  # Track total saved to database
         
         # Initialize database service if session is provided
@@ -351,9 +348,30 @@ class KupatanaService:
                         else:
                             logger.info(f"Found {len(listing_cards)} listings after refresh on page {page_num}")
                     
+                    # For pages after the first, skip the first 8 listings (they are duplicates)
+                    if page_num == 1:
+                        # First page: process all listings
+                        cards_to_process = listing_cards
+                        logger.info(f"Page {page_num}: Processing all {len(cards_to_process)} listings (first page)")
+                    else:
+                        # Subsequent pages: skip first 8 listings
+                        if len(listing_cards) > 8:
+                            cards_to_process = listing_cards[8:]
+                            logger.info(f"Page {page_num}: Skipping first 8 duplicate listings, processing {len(cards_to_process)} listings")
+                        else:
+                            # If page has 8 or fewer listings, they're all duplicates, skip this page
+                            logger.info(f"Page {page_num}: Only {len(listing_cards)} listings found (all duplicates), skipping page")
+                            consecutive_no_new_count += 1
+                            if consecutive_no_new_count >= 2:
+                                logger.info(f"⚠️  Two consecutive pages with no new listings. Stopping pagination.")
+                                break
+                            page_num += 1
+                            continue
+                    
                     # Extract data from each listing card
                     page_listings = []
-                    for card in listing_cards:
+                    new_listings_count = 0  # Track new listings on this page
+                    for card in cards_to_process:
                         try:
                             # Extract URL
                             link = card.find('a')
@@ -411,15 +429,34 @@ class KupatanaService:
                                 'currency': currency
                             }
                             
-                            page_listings.append(listing_data)
+                            # Check if this URL is new (not seen before)
+                            if full_url not in seen_urls:
+                                seen_urls.add(full_url)
+                                page_listings.append(listing_data)
+                                new_listings_count += 1
+                            else:
+                                logger.debug(f"Skipping duplicate listing: {full_url}")
                             
                         except Exception as e:
                             logger.debug(f"Error extracting data from listing card: {e}")
                             continue
                     
+                    # Check if we found any new listings on this page
+                    if new_listings_count == 0:
+                        consecutive_no_new_count += 1
+                        logger.info(f"⚠️  Page {page_num}: No new listings found (Consecutive no-new count: {consecutive_no_new_count})")
+                        
+                        # If two consecutive pages have no new listings, stop
+                        if consecutive_no_new_count >= 2:
+                            logger.info(f"⚠️  Two consecutive pages with no new listings. Stopping pagination.")
+                            break
+                    else:
+                        # Reset counter if we found new listings
+                        consecutive_no_new_count = 0
+                    
                     if page_listings:
                         all_listings.extend(page_listings)
-                        logger.info(f"✅ Page {page_num}: Found {len(page_listings)} listings (Total: {len(all_listings)})")
+                        logger.info(f"✅ Page {page_num}: Found {new_listings_count} new listings, {len(page_listings)} total (Total: {len(all_listings)})")
                         
                         # Update scraping status
                         self.scraping_status['current_page'] = page_num
@@ -439,12 +476,11 @@ class KupatanaService:
                             total_saved += page_saved
                             self.scraping_status['listings_saved'] = total_saved
                             logger.info(f"💾 Page {page_num}: Saved {page_saved} listings to database (Total saved: {total_saved})")
-                        else:
-                            logger.warning(f"No valid listings extracted from page {page_num}. Stopping pagination.")
-                            break
                         
                         # Broadcast status update
                         self._broadcast_status()
+                    else:
+                        logger.warning(f"Page {page_num}: No valid listings extracted. Moving to next page.")
                     
                     # Random delay before next page
                     time.sleep(random.uniform(2, 4))
@@ -478,54 +514,6 @@ class KupatanaService:
             
             logger.info("Scraping completed, status reset")
     
-    def get_listing_urls(self, max_pages: int = 1) -> List[str]:
-        """
-        Get all listing URLs from search result pages
-        
-        Args:
-            max_pages: Number of pages to scrape
-            
-        Returns:
-            List of listing URLs
-        """
-        listing_urls = []
-        
-        for page_num in range(1, max_pages + 1):
-            try:
-                # Navigate to search page
-                search_url = f"{self.base_url}/tz/search/real-estate?page={page_num}"
-                logger.info(f"📄 Fetching page {page_num}: {search_url}")
-                
-                self.driver.get(search_url)
-                self.wait_for_page_load()
-                
-                # Get page source and parse
-                soup = BeautifulSoup(self.driver.page_source, 'html.parser')
-                
-                # Find all listing links
-                # Pattern: /tz/houses-apartments-for-rent/p/{title}/{id}
-                links = soup.find_all('a', href=re.compile(r'/tz/.+/p/.+/.+'))
-                
-                page_urls = []
-                for link in links:
-                    href = link.get('href')
-                    if href and '/p/' in href:
-                        full_url = urljoin(self.base_url, href)
-                        if full_url not in listing_urls and full_url not in page_urls:
-                            page_urls.append(full_url)
-                
-                logger.info(f"✅ Found {len(page_urls)} listings on page {page_num}")
-                listing_urls.extend(page_urls)
-                
-                time.sleep(2)  # Be polite to the server
-                
-            except Exception as e:
-                logger.error(f"Error fetching page {page_num}: {e}")
-                continue
-        
-        logger.info(f"📊 Total listings found: {len(listing_urls)}")
-        return listing_urls
-    
     def extract_phone_from_tel_link(self, soup: BeautifulSoup) -> List[str]:
         """Extract phone numbers from tel: links"""
         phones = []
@@ -545,14 +533,17 @@ class KupatanaService:
         
         return phones
     
-    def extract_detailed_data(self, url: str, total_urls: int = 0, current_index: int = 0) -> Dict:
+    def extract_detailed_data(self, url: str, total_urls: int = 0, current_index: int = 0, 
+                             db_session=None, target_site: str = 'kupatana') -> Dict:
         """
-        Extract detailed information from a listing page
+        Extract detailed information from a listing page and save to database
         
         Args:
             url: URL of the listing detail page
             total_urls: Total number of URLs to scrape (for progress tracking)
             current_index: Current index in the URL list (for progress tracking)
+            db_session: Optional database session to save listing immediately after extraction
+            target_site: Target site name for database saving ('jiji', 'kupatana', etc.)
             
         Returns:
             Dictionary containing all extracted data
@@ -603,72 +594,74 @@ class KupatanaService:
                     'scraped_at': datetime.now().isoformat()
                 }
             
-            # Initialize data structure
-            data = {
-                'url': url,
-                'scraped_at': datetime.now().isoformat()
-            }
-            
-            # Extract listing ID from URL
-            url_parts = url.rstrip('/').split('/')
-            if len(url_parts) >= 2:
-                data['listing_id'] = url_parts[-1]
-            
-            # Extract title (using specific class)
+            # Extract title
             title_elem = soup.find('h1', class_='product-details__title')
             if title_elem:
-                data['title'] = title_elem.get_text(strip=True)
+                title = title_elem.get_text(strip=True)
             else:
                 # Fallback to any h1
                 title_elem = soup.find('h1')
-                data['title'] = title_elem.get_text(strip=True) if title_elem else 'N/A'
+                title = title_elem.get_text(strip=True) if title_elem else None
             
-            # Extract price (using specific class)
+            # Extract listing type from title (sale, rent, lease, etc.)
+            listing_type = None
+            if title:
+                title_lower = title.lower()
+                if 'for rent' in title_lower or 'to rent' in title_lower or 'rent' in title_lower:
+                    listing_type = 'rent'
+                elif 'for sale' in title_lower or 'to sell' in title_lower or 'sale' in title_lower:
+                    listing_type = 'sale'
+                elif 'for lease' in title_lower or 'to lease' in title_lower or 'lease' in title_lower:
+                    listing_type = 'lease'
+            
+            # Extract price and currency
             price_elem = soup.find('h2', class_='product-details__price')
+            currency = None
+            price_value = None
+            
             if price_elem:
-                data['price'] = price_elem.get_text(strip=True)
-            else:
-                # Fallback to any h2
-                price_elem = soup.find('h2')
-                data['price'] = price_elem.get_text(strip=True) if price_elem else 'N/A'
+                price_text = price_elem.get_text(strip=True)
+                # Parse currency and numeric value
+                # Examples: "TZS 4 500 000", "USD 5,000", "$500"
+                if 'TZS' in price_text or 'TSh' in price_text:
+                    currency = 'TSh'
+                    price_text = price_text.replace('TZS', '').replace('TSh', '').strip()
+                elif 'USD' in price_text:
+                    currency = 'USD'
+                    price_text = price_text.replace('USD', '').strip()
+                elif '$' in price_text:
+                    currency = 'USD'
+                    price_text = price_text.replace('$', '').strip()
+                elif '€' in price_text:
+                    currency = 'EUR'
+                    price_text = price_text.replace('€', '').strip()
+                
+                # Try to parse numeric value (remove spaces, commas)
+                try:
+                    price_cleaned = price_text.replace(' ', '').replace(',', '').strip()
+                    if price_cleaned:
+                        price_value = float(price_cleaned)
+                except:
+                    pass
             
-            # Extract posted date from meta section
-            meta_elem = soup.find('p', class_='product-details__meta')
-            if meta_elem:
-                # Extract date (first part before location span)
-                date_text = meta_elem.get_text(strip=True)
-                # Remove location part if present
-                location_span = meta_elem.find('span', class_='product-details__location')
-                if location_span:
-                    location_text = location_span.get_text(strip=True)
-                    date_text = date_text.replace(location_text, '').strip()
-                data['posted_date'] = date_text
-            else:
-                data['posted_date'] = 'N/A'
-            
-            # Extract location (multiple methods)
+            # Extract location
             location = None
-            
-            # Method 1: From product-details__location span
+            # Method 1: From product-details__location span (inside product-details__meta)
             location_elem = soup.find('span', class_='product-details__location')
             if location_elem:
                 location = location_elem.get_text(strip=True)
-            
             # Method 2: From info-box__bubble (map location)
             if not location:
                 info_box = soup.find('div', class_='info-box__bubble')
                 if info_box:
-                    # Remove icon and get text
                     location_text = info_box.get_text(strip=True)
-                    # Clean up (remove icon text if present)
-                    location = location_text
+                    # Remove icon text if present (like "icon-map")
+                    location = location_text.strip()
             
-            data['location'] = location if location else 'N/A'
-            
-            # Extract description (using specific class)
+            # Extract description
             desc_elem = soup.find('p', class_='product-details__description--text')
             if desc_elem:
-                data['description'] = desc_elem.get_text(strip=True)
+                description = desc_elem.get_text(strip=True)
             else:
                 # Fallback method
                 desc_heading = soup.find(string=re.compile(r'Description', re.IGNORECASE))
@@ -676,30 +669,177 @@ class KupatanaService:
                     desc_parent = desc_heading.find_parent()
                     if desc_parent:
                         desc_elem = desc_parent.find_next_sibling('p')
-                        data['description'] = desc_elem.get_text(strip=True) if desc_elem else 'N/A'
+                        description = desc_elem.get_text(strip=True) if desc_elem else None
                     else:
-                        data['description'] = 'N/A'
+                        description = None
                 else:
-                    data['description'] = 'N/A'
+                    description = None
             
-            # Extract details/attributes
+            # Initialize structured data fields (matching Jiji format)
+            property_type = None
+            bedrooms = None
+            bathrooms = None
+            parking_space = None
+            property_size = None
+            property_size_unit = None
+            facilities = []
             attributes = {}
-            details_heading = soup.find(string=re.compile(r'Details', re.IGNORECASE))
-            if details_heading:
-                details_parent = details_heading.find_parent()
-                if details_parent:
-                    # Find all attribute pairs (generic elements with key-value)
-                    detail_items = details_parent.find_next_siblings()
-                    for item in detail_items:
-                        # Look for key-value pairs in nested divs/generics
-                        children = item.find_all(recursive=False)
-                        if len(children) >= 2:
-                            key = children[0].get_text(strip=True)
-                            value = children[1].get_text(strip=True)
-                            if key and value:
-                                attributes[key] = value
             
-            data['attributes'] = attributes
+            # Extract property type from categories section
+            # Find the Categories heading first
+            categories_heading = soup.find('h4', class_='custom-card__title', string=re.compile(r'Categories', re.IGNORECASE))
+            if categories_heading:
+                # Find the parent custom-card div
+                categories_section = categories_heading.find_parent('div', class_='custom-card')
+                if categories_section:
+                    # Find all category tags (div.ant-tag) within the categories section
+                    category_tags = categories_section.find_all('div', class_='ant-tag')
+                    for tag in category_tags:
+                        category_text = tag.get_text(strip=True)
+                        if category_text:
+                            category_lower = category_text.lower()
+                            # Skip "Real estate" as it's too generic
+                            if 'real estate' in category_lower and len(category_text.split()) <= 2:
+                                continue
+                            
+                            # Parse category to extract property type
+                            # Examples: "Houses - Apartments for Rent" -> "House" or "Apartment"
+                            if 'house' in category_lower and 'apartment' not in category_lower:
+                                property_type = 'House'
+                            elif 'apartment' in category_lower:
+                                property_type = 'Apartment'
+                            elif 'house' in category_lower and 'apartment' in category_lower:
+                                # If both mentioned, check description or title for more specific info
+                                if description and 'standalone' in description.lower():
+                                    property_type = 'House'
+                                else:
+                                    property_type = 'House'  # Default to house if both mentioned
+                            elif 'villa' in category_lower:
+                                property_type = 'Villa'
+                            elif 'bungalow' in category_lower:
+                                property_type = 'Bungalow'
+                            elif 'land' in category_lower:
+                                property_type = 'Land'
+                            elif 'commercial' in category_lower:
+                                property_type = 'Commercial Property'
+                            elif 'flat' in category_lower:
+                                property_type = 'Flat'
+                            elif 'studio' in category_lower:
+                                property_type = 'Studio'
+                            # Use the most specific category (usually the last one)
+                            if property_type:
+                                break
+            
+            # Also check breadcrumb for property type
+            if not property_type:
+                breadcrumb = soup.find('div', class_='product-breadcrumb')
+                if breadcrumb:
+                    breadcrumb_links = breadcrumb.find_all('a', href=re.compile(r'/tz/search/'))
+                    for link in breadcrumb_links:
+                        link_text = link.get_text(strip=True)
+                        if link_text:
+                            link_lower = link_text.lower()
+                            if 'house' in link_lower and 'apartment' not in link_lower:
+                                property_type = 'House'
+                            elif 'apartment' in link_lower:
+                                property_type = 'Apartment'
+                            elif 'house' in link_lower and 'apartment' in link_lower:
+                                property_type = 'House'  # Default to house if both mentioned
+                            elif 'villa' in link_lower:
+                                property_type = 'Villa'
+                            elif 'land' in link_lower:
+                                property_type = 'Land'
+                            if property_type:
+                                break
+            
+            # Also check description and title for property type keywords
+            if not property_type:
+                text_to_check = (title or '') + ' ' + (description or '')
+                text_lower = text_to_check.lower()
+                if 'standalone' in text_lower or 'stand alone' in text_lower:
+                    property_type = 'House'
+                elif 'apartment' in text_lower or 'flat' in text_lower:
+                    property_type = 'Apartment'
+                elif 'villa' in text_lower:
+                    property_type = 'Villa'
+                elif 'bungalow' in text_lower:
+                    property_type = 'Bungalow'
+                elif 'land' in text_lower and 'plot' in text_lower:
+                    property_type = 'Land'
+                elif 'commercial' in text_lower:
+                    property_type = 'Commercial Property'
+            
+            # Extract details/attributes from product-details__attributes
+            details_section = soup.find('div', class_='product-details__attributes')
+            if details_section:
+                # Find all attribute rows (ant-row-flex with product-details__attributes--text)
+                attr_rows = details_section.find_all('div', class_='ant-row-flex')
+                for row in attr_rows:
+                    # Find all divs with ant-col classes (ant-col-xs-12, ant-col-sm-10, etc.)
+                    cols = row.find_all('div', class_=re.compile(r'ant-col'))
+                    if len(cols) >= 2:
+                        key = cols[0].get_text(strip=True)
+                        value = cols[1].get_text(strip=True)
+                        if key and value:
+                            # Try to extract structured data
+                            key_lower = key.lower()
+                            value_lower = value.lower()
+                            
+                            # Property type
+                            if key_lower in ['type', 'property type', 'category']:
+                                if value_lower in ['house', 'apartment', 'villa', 'bungalow', 'flat', 'studio', 'land', 'commercial property']:
+                                    property_type = value
+                            
+                            # Bedrooms - also check description for "3 bdrsms" or "3 bedrooms"
+                            elif 'bedroom' in key_lower or 'bed' in key_lower or 'bdr' in key_lower:
+                                match = re.search(r'(\d+)', value)
+                                if match:
+                                    bedrooms = int(match.group(1))
+                            
+                            # Bathrooms
+                            elif 'bathroom' in key_lower or 'bath' in key_lower:
+                                match = re.search(r'(\d+)', value)
+                                if match:
+                                    bathrooms = int(match.group(1))
+                            
+                            # Parking - also check description for "parking can accomodate 8 cars"
+                            elif 'parking' in key_lower:
+                                match = re.search(r'(\d+)', value)
+                                if match:
+                                    parking_space = int(match.group(1))
+                                elif 'yes' in value_lower or 'available' in value_lower:
+                                    parking_space = 1
+                            
+                            # Property size
+                            elif 'size' in key_lower or 'area' in key_lower:
+                                match = re.search(r'([\d,\.]+)\s*(\w+)', value)
+                                if match:
+                                    try:
+                                        property_size = float(match.group(1).replace(',', ''))
+                                        property_size_unit = match.group(2)  # sqm, sqft, etc.
+                                    except:
+                                        pass
+                            
+                            # Store all attributes
+                            attributes[key] = value
+            
+            # Also try to extract structured data from description if not found in attributes
+            if description:
+                desc_lower = description.lower()
+                
+                # Extract bedrooms from description (e.g., "3 bdrsms")
+                if bedrooms is None:
+                    bed_match = re.search(r'(\d+)\s*(?:bedroom|bdr|bed)', desc_lower)
+                    if bed_match:
+                        bedrooms = int(bed_match.group(1))
+                
+                # Extract parking from description (e.g., "parking can accomodate 8 cars")
+                if parking_space is None:
+                    parking_match = re.search(r'parking.*?(\d+)\s*(?:car|space)', desc_lower)
+                    if parking_match:
+                        parking_space = int(parking_match.group(1))
+                    elif 'parking' in desc_lower and ('yes' in desc_lower or 'available' in desc_lower):
+                        parking_space = 1
             
             # Extract images
             images = []
@@ -730,64 +870,67 @@ class KupatanaService:
                                 images.append(full_img_url)
             
             # Limit to reasonable number
-            data['images'] = images[:20]
-            data['image_count'] = len(data['images'])
+            images = images[:20]
             
-            # Extract seller information
-            seller_info = {}
+            # Extract contact information (matching Jiji format)
+            contact_name = None
+            contact_phone = []
             
-            # Method 1: Find seller name using specific class
+            # Extract seller name
             seller_name_elem = soup.find('h4', class_='product-chat__avatar__title')
             if seller_name_elem:
-                seller_info['name'] = seller_name_elem.get_text(strip=True)
+                contact_name = seller_name_elem.get_text(strip=True)
             else:
-                # Fallback: Find in any h4 (skip common headings)
-                seller_headings = soup.find_all('h4')
-                for heading in seller_headings:
-                    text = heading.get_text(strip=True)
-                    if text and text not in ['User', 'Categories', 'Location']:
-                        seller_info['name'] = text
-                        break
-            
-            # Extract member since information
-            member_elem = soup.find('div', class_='product-chat__avatar__member')
-            if member_elem:
-                member_text = member_elem.get_text(strip=True)
-                seller_info['member_since'] = member_text
-            else:
-                # Fallback
-                member_text = soup.find(string=re.compile(r'Member since', re.IGNORECASE))
-                if member_text:
-                    seller_info['member_since'] = member_text.strip()
-            
-            # Extract verification status
-            verification = soup.find(string=re.compile(r'verified', re.IGNORECASE))
-            if verification:
-                seller_info['verification_status'] = verification.strip()
+                # Fallback: Find in product-user-info__avatar__title
+                seller_name_elem = soup.find('h4', class_='product-user-info__avatar__title')
+                if seller_name_elem:
+                    contact_name = seller_name_elem.get_text(strip=True)
             
             # Extract phone numbers from tel: links
             phones = self.extract_phone_from_tel_link(soup)
-            seller_info['phones'] = phones
-            seller_info['phone_count'] = len(phones)
+            contact_phone = phones
             
             if phones:
                 logger.info(f"✅ Extracted {len(phones)} phone number(s): {', '.join(phones)}")
-            else:
-                logger.warning("⚠️ No phone numbers found")
             
-            data['seller_info'] = seller_info
+            # Return data in format compatible with database schema (matching Jiji format)
+            result = {
+                'url': url,
+                'title': title,
+                'price': price_value,  # Numeric value
+                'currency': currency,  # Currency code (TSh, USD, etc.)
+                'location': location,
+                'description': description,
+                'property_type': property_type,
+                'listing_type': listing_type,  # rent, sale, lease
+                'bedrooms': bedrooms,
+                'bathrooms': bathrooms,
+                'parking_space': parking_space,
+                'property_size': property_size,  # Numeric value
+                'property_size_unit': property_size_unit,  # sqm, sqft, etc.
+                'facilities': facilities,
+                'attributes': attributes,
+                'images': images,
+                'contact_name': contact_name,
+                'contact_phone': contact_phone,
+                'contact_email': []  # Email not typically available from Kupatana
+            }
             
-            # Extract category path
-            categories = []
-            category_links = soup.find_all('a', href=re.compile(r'/tz/search/'))
-            for link in category_links:
-                cat_text = link.get_text(strip=True)
-                if cat_text and cat_text not in categories:
-                    categories.append(cat_text)
-            data['categories'] = categories
+            logger.info(f"✅ Extracted: {result['title'][:50] if result['title'] else 'Unknown'}...")
             
-            logger.info(f"✅ Successfully extracted data for: {data.get('title', 'Unknown')}")
-            return data
+            # Save to database if db_session is provided
+            if db_session and 'error' not in result:
+                try:
+                    from app.services.database_service import DatabaseService
+                    db_service = DatabaseService(db_session)
+                    db_service.create_or_update_listing(result, target_site)
+                    logger.info(f"💾 Saved listing to database: {url}")
+                except Exception as e:
+                    logger.error(f"Error saving listing to database: {e}")
+                    import traceback
+                    logger.debug(traceback.format_exc())
+            
+            return result
             
         except Exception as e:
             logger.error(f"❌ Error extracting data from {url}: {e}")
@@ -803,167 +946,3 @@ class KupatanaService:
             # We don't update status here to avoid race conditions
             pass
     
-    def scrape_detailed_listings(self, max_pages: int = 1, max_listings: Optional[int] = None):
-        """
-        Main scraping function
-        
-        Args:
-            max_pages: Number of search result pages to scrape
-            max_listings: Maximum number of detailed listings to extract (None for all)
-        """
-        try:
-            self.start_browser()
-            
-            # Get listing URLs
-            logger.info(f"{'='*70}")
-            logger.info("STEP 1: Collecting listing URLs")
-            logger.info(f"{'='*70}")
-            
-            listing_urls = self.get_listing_urls(max_pages=max_pages)
-            
-            if not listing_urls:
-                logger.warning("No listings found!")
-                return
-            
-            # Limit listings if specified
-            if max_listings:
-                listing_urls = listing_urls[:max_listings]
-                logger.info(f"Limiting to first {max_listings} listings")
-            
-            # Extract detailed data
-            logger.info(f"\n{'='*70}")
-            logger.info(f"STEP 2: Extracting detailed data from {len(listing_urls)} listings")
-            logger.info(f"{'='*70}\n")
-            
-            for idx, url in enumerate(listing_urls, 1):
-                logger.info(f"[{idx}/{len(listing_urls)}] Processing listing...")
-                data = self.extract_detailed_data(url)
-                self.detailed_listings.append(data)
-                
-                # Small delay between requests
-                time.sleep(2)
-            
-            logger.info(f"\n{'='*70}")
-            logger.info("✅ SCRAPING COMPLETED")
-            logger.info(f"{'='*70}\n")
-            
-        except Exception as e:
-            logger.error(f"Error during scraping: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-        finally:
-            self.close_browser()
-        
-        return self.detailed_listings
-    
-    def save_to_json(self, filename: str = None):
-        """Save detailed data to JSON"""
-        if not filename:
-            filename = f"kupatana_detailed_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(self.detailed_listings, f, indent=2, ensure_ascii=False)
-        
-        logger.info(f"💾 Saved to {filename}")
-        return filename
-    
-    def save_to_csv(self, filename: str = None):
-        """Save detailed data to CSV"""
-        if not filename:
-            filename = f"kupatana_detailed_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-        
-        if not self.detailed_listings:
-            logger.warning("No data to save")
-            return None
-        
-        # Flatten nested data for CSV
-        flat_data = []
-        for listing in self.detailed_listings:
-            flat = listing.copy()
-            
-            # Convert nested dictionaries to strings
-            if 'attributes' in flat and isinstance(flat['attributes'], dict):
-                for key, value in flat['attributes'].items():
-                    flat[f'attr_{key}'] = value
-                del flat['attributes']
-            
-            if 'seller_info' in flat and isinstance(flat['seller_info'], dict):
-                for key, value in flat['seller_info'].items():
-                    # Handle list of phone numbers
-                    if key == 'phones' and isinstance(value, list):
-                        flat[f'seller_{key}'] = '; '.join(value)
-                    else:
-                        flat[f'seller_{key}'] = value
-                del flat['seller_info']
-            
-            if 'images' in flat and isinstance(flat['images'], list):
-                flat['images'] = '; '.join(flat['images'])
-            
-            if 'categories' in flat and isinstance(flat['categories'], list):
-                flat['categories'] = '; '.join(flat['categories'])
-            
-            flat_data.append(flat)
-        
-        # Get all keys
-        fieldnames = set()
-        for item in flat_data:
-            fieldnames.update(item.keys())
-        fieldnames = sorted(fieldnames)
-        
-        with open(filename, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(flat_data)
-        
-        logger.info(f"💾 Saved to {filename}")
-        return filename
-    
-    def print_summary(self):
-        """Print summary of scraped data"""
-        if not self.detailed_listings:
-            logger.info("No data scraped yet")
-            return
-        
-        logger.info(f"\n{'='*70}")
-        logger.info(f"KUPATANA SCRAPING SUMMARY")
-        logger.info(f"{'='*70}")
-        logger.info(f"Total listings scraped: {len(self.detailed_listings)}")
-        
-        # Count successful extractions
-        successful = sum(1 for l in self.detailed_listings if 'error' not in l)
-        logger.info(f"Successful extractions: {successful}")
-        
-        # Count with images
-        with_images = sum(1 for l in self.detailed_listings if l.get('image_count', 0) > 0)
-        logger.info(f"Listings with images: {with_images}")
-        
-        # Count with seller info
-        with_seller = sum(1 for l in self.detailed_listings if l.get('seller_info'))
-        logger.info(f"Listings with seller info: {with_seller}")
-        
-        # Count with phone numbers
-        with_phones = sum(1 for l in self.detailed_listings 
-                         if l.get('seller_info', {}).get('phone_count', 0) > 0)
-        logger.info(f"Listings with phone numbers: {with_phones}")
-        
-        # Count total phone numbers extracted
-        total_phones = sum(l.get('seller_info', {}).get('phone_count', 0) 
-                          for l in self.detailed_listings)
-        logger.info(f"Total phone numbers extracted: {total_phones}")
-        
-        # Count total images
-        total_images = sum(l.get('image_count', 0) for l in self.detailed_listings)
-        logger.info(f"Total images extracted: {total_images}")
-        
-        # Show sample of attributes found
-        all_attrs = set()
-        for listing in self.detailed_listings:
-            if 'attributes' in listing and isinstance(listing['attributes'], dict):
-                all_attrs.update(listing['attributes'].keys())
-        
-        if all_attrs:
-            logger.info(f"\nAttribute types found ({len(all_attrs)}):")
-            for attr in sorted(all_attrs):
-                logger.info(f"  - {attr}")
-        
-        logger.info(f"{'='*70}\n")
