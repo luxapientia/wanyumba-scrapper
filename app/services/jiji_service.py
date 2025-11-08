@@ -555,10 +555,11 @@ class JijiService:
                                     pass
                             
                             listing_data = {
-                                'url': full_url,
+                                'raw_url': full_url,
                                 'title': title,
                                 'price': price_value,
-                                'currency': currency
+                                'price_currency': currency,
+                                'source': 'jiji'
                             }
                             
                             page_listings.append(listing_data)
@@ -632,8 +633,21 @@ class JijiService:
             
             logger.info("Scraping completed, status reset")
     
-    def extract_detailed_data(self, listing_url: str, total_urls: int = 0, current_index: int = 0) -> Dict:
-        """Extract detailed data from a single listing page"""
+    def extract_detailed_data(self, listing_url: str, total_urls: int = 0, current_index: int = 0,
+                             db_session=None, target_site: str = 'jiji') -> Dict:
+        """
+        Extract detailed data from a single listing page and save to database
+        
+        Args:
+            listing_url: URL of the listing detail page
+            total_urls: Total number of URLs to scrape (for progress tracking)
+            current_index: Current index in the URL list (for progress tracking)
+            db_session: Optional database session to save listing immediately after extraction
+            target_site: Target site name for database saving ('jiji', 'kupatana', etc.)
+            
+        Returns:
+            Dictionary containing all extracted data
+        """
         # Set scraping status (don't reset stop flag - it may have been set by user)
         self.is_scraping = True
         
@@ -651,7 +665,7 @@ class JijiService:
             if self.should_stop:
                 logger.info("Stop flag detected. Skipping detailed extraction.")
                 return {
-                    'url': listing_url,
+                    'raw_url': listing_url,
                     'error': 'Scraping was stopped',
                     'scraped_at': datetime.now().isoformat()
                 }
@@ -669,7 +683,7 @@ class JijiService:
             if self.should_stop:
                 logger.info("Stop flag detected after page load. Stopping detailed extraction.")
                 return {
-                    'url': listing_url,
+                    'raw_url': listing_url,
                     'error': 'Scraping was stopped',
                     'scraped_at': datetime.now().isoformat()
                 }
@@ -686,7 +700,7 @@ class JijiService:
             if self.should_stop:
                 logger.info("Stop flag detected after parsing. Stopping detailed extraction.")
                 return {
-                    'url': listing_url,
+                    'raw_url': listing_url,
                     'error': 'Scraping was stopped',
                     'scraped_at': datetime.now().isoformat()
                 }
@@ -901,7 +915,7 @@ class JijiService:
             if self.should_stop:
                 logger.info("Stop flag detected before contact extraction. Stopping detailed extraction.")
                 return {
-                    'url': listing_url,
+                    'raw_url': listing_url,
                     'error': 'Scraping was stopped',
                     'scraped_at': datetime.now().isoformat()
                 }
@@ -1040,31 +1054,106 @@ class JijiService:
             listing_id = listing_url.split('/')[-1].split('.')[0].split('?')[0] if '/' in listing_url else 'N/A'
             data['listing_id'] = listing_id
             
-            # Return data in format compatible with database schema
-            # This matches what RealEstateListing.from_scraper_data() expects
+            # Parse location into structured fields
+            # Location format: "City, District, Region" or "District, Region"
+            location_text = data.get('location', '')
+            country = 'Tanzania'
+            region = None
+            city = None
+            district = None
+            address_text = location_text
+            
+            if location_text and location_text != 'N/A':
+                location_parts = [part.strip() for part in location_text.split(',')]
+                if len(location_parts) >= 3:
+                    city = location_parts[0]
+                    district = location_parts[1]
+                    region = location_parts[2]
+                elif len(location_parts) == 2:
+                    district = location_parts[0]
+                    region = location_parts[1]
+                elif len(location_parts) == 1:
+                    region = location_parts[0]
+            
+            # Extract source_listing_id from URL
+            # URL format: https://jiji.co.tz/goba/land-and-plots-for-sale/plot-for-sale-goba-lastanza-5Pu0dt7TQY9Q38ZCAxEkmTeR.html
+            source_listing_id = None
+            if listing_url:
+                # Extract the ID from the end of the URL (after the last dash before .html)
+                url_parts = listing_url.rstrip('/').split('/')[-1]
+                if url_parts.endswith('.html'):
+                    url_parts = url_parts[:-5]  # Remove .html
+                # The ID is typically after the last dash
+                if '-' in url_parts:
+                    source_listing_id = url_parts.split('-')[-1]
+            
+            # Determine price_period based on listing_type
+            price_period = None
+            listing_type = data.get('listing_type')
+            if listing_type == 'rent':
+                price_period = 'month'
+            elif listing_type == 'sale':
+                price_period = 'once'
+            
+            # Convert property_size to living_area_sqm (assuming it's already in sqm)
+            living_area_sqm = data.get('property_size')  # Already numeric
+            # If unit is sqft, convert to sqm
+            property_size_unit = data.get('property_size_unit', '').lower()
+            if living_area_sqm and 'sqft' in property_size_unit:
+                living_area_sqm = living_area_sqm * 0.092903  # Convert sqft to sqm
+            
+            # Convert contact_phone from array to single string (first phone)
+            contact_phone_list = data.get('contact_phone', [])
+            agent_phone = contact_phone_list[0] if contact_phone_list else None
+            
+            # Return data in format compatible with new database schema
             result = {
-                'url': data.get('url'),
+                'raw_url': data.get('url'),
+                'source': 'jiji',
+                'source_listing_id': source_listing_id,
+                'scrape_timestamp': datetime.now().isoformat(),
                 'title': data.get('title'),
-                'price': data.get('price'),  # Numeric value
-                'currency': data.get('currency'),  # Currency code (TSh, USD, etc.)
-                'location': data.get('location'),
                 'description': data.get('description'),
                 'property_type': data.get('property_type'),
-                'listing_type': data.get('listing_type'),  # rent, sale, lease
+                'listing_type': listing_type,
+                'status': 'active',  # Assume active if we can scrape it
+                'price': data.get('price'),  # Numeric value
+                'price_currency': data.get('currency'),  # Currency code (TSh, USD, etc.)
+                'price_period': price_period,
+                'country': country,
+                'region': region,
+                'city': city,
+                'district': district,
+                'address_text': address_text,
+                'latitude': None,
+                'longitude': None,
                 'bedrooms': data.get('bedrooms'),
                 'bathrooms': data.get('bathrooms'),
-                'parking_space': data.get('parking_space'),
-                'property_size': data.get('property_size'),  # Numeric value
-                'property_size_unit': data.get('property_size_unit'),  # sqm, sqft, etc.
-                'facilities': data.get('facilities', []),
-                'attributes': data.get('attributes', {}),
+                'living_area_sqm': living_area_sqm,
+                'land_area_sqm': None,  # Not available from Jiji
                 'images': data.get('images', []),
-                'contact_name': data.get('contact_name'),
-                'contact_phone': data.get('contact_phone', []),
-                'contact_email': data.get('contact_email', [])
+                'agent_name': data.get('contact_name'),
+                'agent_phone': agent_phone,
+                'agent_whatsapp': None,  # Not available from Jiji
+                'agent_email': None,  # Not available from Jiji
+                'agent_website': None,  # Not available from Jiji
+                'agent_profile_url': None  # Not available from Jiji
             }
             
-            logger.info(f"✅ Extracted: {result['title'][:50]}...")
+            logger.info(f"✅ Extracted: {result['title'][:50] if result.get('title') else 'N/A'}...")
+            
+            # Save to database if db_session is provided
+            if db_session and 'error' not in result:
+                try:
+                    from app.services.database_service import DatabaseService
+                    db_service = DatabaseService(db_session)
+                    db_service.create_or_update_listing(result, target_site)
+                    logger.info(f"💾 Saved listing to database: {listing_url}")
+                except Exception as e:
+                    logger.error(f"Error saving listing to database: {e}")
+                    import traceback
+                    logger.debug(traceback.format_exc())
+            
             return result
             
         except Exception as e:
@@ -1072,7 +1161,7 @@ class JijiService:
             import traceback
             traceback.print_exc()
             return {
-                'url': listing_url,
+                'raw_url': listing_url,
                 'error': str(e),
                 'scraped_at': datetime.now().isoformat()
             }

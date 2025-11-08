@@ -423,10 +423,11 @@ class KupatanaService:
                                     pass
                             
                             listing_data = {
-                                'url': full_url,
+                                'raw_url': full_url,
                                 'title': title,
                                 'price': price_value,
-                                'currency': currency
+                                'price_currency': currency,
+                                'source': 'kupatana'
                             }
                             
                             # Check if this URL is new (not seen before)
@@ -566,7 +567,7 @@ class KupatanaService:
             if self.should_stop:
                 logger.info("Stop flag detected. Skipping detailed extraction.")
                 return {
-                    'url': url,
+                    'raw_url': url,
                     'error': 'Scraping was stopped',
                     'scraped_at': datetime.now().isoformat()
                 }
@@ -577,7 +578,7 @@ class KupatanaService:
             if self.should_stop:
                 logger.info("Stop flag detected after page load. Stopping detailed extraction.")
                 return {
-                    'url': url,
+                    'raw_url': url,
                     'error': 'Scraping was stopped',
                     'scraped_at': datetime.now().isoformat()
                 }
@@ -589,7 +590,7 @@ class KupatanaService:
             if self.should_stop:
                 logger.info("Stop flag detected after parsing. Stopping detailed extraction.")
                 return {
-                    'url': url,
+                    'raw_url': url,
                     'error': 'Scraping was stopped',
                     'scraped_at': datetime.now().isoformat()
                 }
@@ -893,30 +894,93 @@ class KupatanaService:
             if phones:
                 logger.info(f"✅ Extracted {len(phones)} phone number(s): {', '.join(phones)}")
             
-            # Return data in format compatible with database schema (matching Jiji format)
+            # Parse location into structured fields
+            # Location format from Kupatana can vary - try to parse it
+            country = 'Tanzania'
+            region = None
+            city = None
+            district = None
+            address_text = location
+            
+            if location:
+                # Try to parse location string (e.g., "Dar es Salaam, Kinondoni" or "Dar es Salaam")
+                location_parts = [part.strip() for part in location.split(',')]
+                if len(location_parts) >= 2:
+                    city = location_parts[0]
+                    district = location_parts[1]
+                    if len(location_parts) >= 3:
+                        region = location_parts[2]
+                    else:
+                        region = city  # Use city as region if not specified separately
+                elif len(location_parts) == 1:
+                    city = location_parts[0]
+                    region = city
+            
+            # Extract source_listing_id from URL
+            # URL format: https://kupatana.com/tz/products/standalone-house-for-rent-in-mbezi-beach-3-bedrooms-123456
+            source_listing_id = None
+            if url:
+                # Extract the ID from the end of the URL (typically the last segment)
+                url_parts = url.rstrip('/').split('/')[-1]
+                # Try to extract numeric ID if present
+                id_match = re.search(r'-(\d+)$', url_parts)
+                if id_match:
+                    source_listing_id = id_match.group(1)
+                else:
+                    # Use the entire slug as ID if no numeric ID found
+                    source_listing_id = url_parts
+            
+            # Determine price_period based on listing_type
+            price_period = None
+            if listing_type == 'rent':
+                price_period = 'month'
+            elif listing_type == 'sale':
+                price_period = 'once'
+            
+            # Convert property_size to living_area_sqm (assuming it's already in sqm)
+            living_area_sqm = property_size  # Already numeric
+            # If unit is sqft, convert to sqm
+            if living_area_sqm and property_size_unit and 'sqft' in property_size_unit.lower():
+                living_area_sqm = living_area_sqm * 0.092903  # Convert sqft to sqm
+            
+            # Convert contact_phone from array to single string (first phone)
+            agent_phone = contact_phone[0] if contact_phone else None
+            
+            # Return data in format compatible with new database schema
             result = {
-                'url': url,
+                'raw_url': url,
+                'source': 'kupatana',
+                'source_listing_id': source_listing_id,
+                'scrape_timestamp': datetime.now().isoformat(),
                 'title': title,
-                'price': price_value,  # Numeric value
-                'currency': currency,  # Currency code (TSh, USD, etc.)
-                'location': location,
                 'description': description,
                 'property_type': property_type,
-                'listing_type': listing_type,  # rent, sale, lease
+                'listing_type': listing_type,
+                'status': 'active',  # Assume active if we can scrape it
+                'price': price_value,  # Numeric value
+                'price_currency': currency,  # Currency code (TSh, USD, etc.)
+                'price_period': price_period,
+                'country': country,
+                'region': region,
+                'city': city,
+                'district': district,
+                'address_text': address_text,
+                'latitude': None,
+                'longitude': None,
                 'bedrooms': bedrooms,
                 'bathrooms': bathrooms,
-                'parking_space': parking_space,
-                'property_size': property_size,  # Numeric value
-                'property_size_unit': property_size_unit,  # sqm, sqft, etc.
-                'facilities': facilities,
-                'attributes': attributes,
+                'living_area_sqm': living_area_sqm,
+                'land_area_sqm': None,  # Not typically available from Kupatana
                 'images': images,
-                'contact_name': contact_name,
-                'contact_phone': contact_phone,
-                'contact_email': []  # Email not typically available from Kupatana
+                'agent_name': contact_name,
+                'agent_phone': agent_phone,
+                'agent_whatsapp': None,  # Not available from Kupatana
+                'agent_email': None,  # Not available from Kupatana
+                'agent_website': None,  # Not available from Kupatana
+                'agent_profile_url': None  # Not available from Kupatana
             }
             
-            logger.info(f"✅ Extracted: {result['title'][:50] if result['title'] else 'Unknown'}...")
+            logger.info(f"✅ Extracted: {result['title'][:50] if result.get('title') else 'Unknown'}...")
             
             # Save to database if db_session is provided
             if db_session and 'error' not in result:
@@ -937,7 +1001,7 @@ class KupatanaService:
             import traceback
             logger.debug(traceback.format_exc())
             return {
-                'url': url,
+                'raw_url': url,
                 'error': str(e),
                 'scraped_at': datetime.now().isoformat()
             }
