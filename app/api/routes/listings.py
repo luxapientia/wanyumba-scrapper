@@ -17,22 +17,28 @@ logger = logging.getLogger(__name__)
 async def get_listings(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(25, ge=1, le=100, description="Items per page"),
-    source: Optional[str] = Query(None, description="Filter by source (jiji, kupatana)"),
-    search: Optional[str] = Query(None, description="Search in title, location, description"),
+    source: Optional[str] = Query(
+        None, description="Filter by source (jiji, kupatana)"),
+    search: Optional[str] = Query(
+        None, description="Search in title, location, description"),
     sortBy: Optional[str] = Query("created_at", description="Sort by field"),
-    sortOrder: Optional[str] = Query("desc", description="Sort order (asc, desc)"),
-    propertyType: Optional[str] = Query(None, description="Filter by property type"),
-    listingType: Optional[str] = Query(None, description="Filter by listing type (rent, sale)"),
+    sortOrder: Optional[str] = Query(
+        "desc", description="Sort order (asc, desc)"),
+    propertyType: Optional[str] = Query(
+        None, description="Filter by property type"),
+    listingType: Optional[str] = Query(
+        None, description="Filter by listing type (rent, sale)"),
     minPrice: Optional[float] = Query(None, description="Minimum price"),
     maxPrice: Optional[float] = Query(None, description="Maximum price"),
-    bedrooms: Optional[int] = Query(None, description="Filter by number of bedrooms"),
+    bedrooms: Optional[int] = Query(
+        None, description="Filter by number of bedrooms"),
     city: Optional[str] = Query(None, description="Filter by city"),
     region: Optional[str] = Query(None, description="Filter by region"),
     db: Session = Depends(get_db)
 ):
     """
     Get listings with pagination, filtering, and sorting
-    
+
     - **page**: Page number (starts from 1)
     - **limit**: Number of items per page (max 100)
     - **source**: Filter by source site (jiji, kupatana)
@@ -49,38 +55,39 @@ async def get_listings(
     """
     try:
         db_service = DatabaseService(db)
-        
+
         # Build query
         from app.models.real_estate import RealEstateListing
         from sqlalchemy import or_, and_
-        
+
         query = db.query(RealEstateListing)
-        
+
         # Apply filters
         if source and source != 'all':
             query = query.filter(RealEstateListing.source == source)
-        
+
         if propertyType:
-            query = query.filter(RealEstateListing.property_type == propertyType)
-        
+            query = query.filter(
+                RealEstateListing.property_type == propertyType)
+
         if listingType:
             query = query.filter(RealEstateListing.listing_type == listingType)
-        
+
         if minPrice is not None:
             query = query.filter(RealEstateListing.price >= minPrice)
-        
+
         if maxPrice is not None:
             query = query.filter(RealEstateListing.price <= maxPrice)
-        
+
         if bedrooms is not None:
             query = query.filter(RealEstateListing.bedrooms == bedrooms)
-        
+
         if city:
             query = query.filter(RealEstateListing.city.ilike(f"%{city}%"))
-        
+
         if region:
             query = query.filter(RealEstateListing.region.ilike(f"%{region}%"))
-        
+
         if search:
             search_term = f"%{search}%"
             query = query.filter(
@@ -93,24 +100,25 @@ async def get_listings(
                     RealEstateListing.region.ilike(search_term),
                 )
             )
-        
+
         # Get total count before pagination
         total = query.count()
-        
+
         # Apply sorting
-        sort_field = getattr(RealEstateListing, sortBy, RealEstateListing.created_at)
+        sort_field = getattr(RealEstateListing, sortBy,
+                             RealEstateListing.created_at)
         if sortOrder == 'desc':
             query = query.order_by(sort_field.desc())
         else:
             query = query.order_by(sort_field.asc())
-        
+
         # Apply pagination
         offset = (page - 1) * limit
         listings = query.offset(offset).limit(limit).all()
-        
+
         # Calculate total pages
         total_pages = (total + limit - 1) // limit
-        
+
         return {
             "listings": [listing.to_dict(include_details=True) for listing in listings],
             "total": total,
@@ -127,7 +135,7 @@ async def get_listings(
 async def get_statistics(db: Session = Depends(get_db)):
     """
     Get database statistics
-    
+
     Returns counts of total listings, jiji listings, and kupatana listings
     """
     try:
@@ -147,7 +155,7 @@ async def search_listings(
 ):
     """
     Search listings by query
-    
+
     - **q**: Search query (searches in title, location, description)
     - **limit**: Maximum number of results (default 50, max 100)
     """
@@ -164,16 +172,16 @@ async def search_listings(
 async def get_listing(url: str, db: Session = Depends(get_db)):
     """
     Get a single listing by URL
-    
+
     - **url**: The listing URL (raw_url from database)
     """
     try:
         db_service = DatabaseService(db)
         listing = db_service.get_listing_by_url(url)
-        
+
         if not listing:
             raise HTTPException(status_code=404, detail="Listing not found")
-        
+
         return listing
     except HTTPException:
         raise
@@ -186,20 +194,19 @@ async def get_listing(url: str, db: Session = Depends(get_db)):
 async def delete_listing(url: str, db: Session = Depends(get_db)):
     """
     Delete a listing by URL
-    
+
     - **url**: The listing URL (raw_url from database)
     """
     try:
         db_service = DatabaseService(db)
         success = db_service.delete_listing(url)
-        
+
         if not success:
             raise HTTPException(status_code=404, detail="Listing not found")
-        
+
         return {"status": "success", "message": "Listing deleted successfully"}
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error deleting listing: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-

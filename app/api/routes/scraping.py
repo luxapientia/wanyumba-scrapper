@@ -37,14 +37,15 @@ def _scrape_all_listings_task(
             scraper = KupatanaService.get_instance()
         else:
             raise ValueError(f"Unknown target site: {target_site}")
-        
+
         logger.info(f"Starting to scrape all listings from {target_site}")
-        
+
         # Get all listings (basic info) and save to database immediately after each page
-        listings = scraper.get_all_listings_basic(max_pages=max_pages, db_session=db, target_site=target_site)
-        
+        listings = scraper.get_all_listings_basic(
+            max_pages=max_pages, db_session=db, target_site=target_site)
+
         logger.info(f"Scraped {len(listings)} listings from {target_site}")
-        
+
     except Exception as e:
         logger.error(f"Error scraping listings from {target_site}: {e}")
         import traceback
@@ -69,9 +70,10 @@ def _scrape_detailed_listings_task(
             scraper = KupatanaService.get_instance()
         else:
             raise ValueError(f"Unknown target site: {target_site}")
-        
-        logger.info(f"Starting to scrape {len(urls)} detailed listings from {target_site}")
-        
+
+        logger.info(
+            f"Starting to scrape {len(urls)} detailed listings from {target_site}")
+
         # Initialize scraping status for details
         scraper.is_scraping = True
         scraper.should_stop = False
@@ -89,9 +91,9 @@ def _scrape_detailed_listings_task(
             'status': 'scraping'
         }
         scraper._broadcast_status()
-        
+
         total_urls = len(urls)
-        
+
         for index, url in enumerate(urls, 1):
             # Check if stop flag is set
             if scraper.should_stop:
@@ -101,21 +103,21 @@ def _scrape_detailed_listings_task(
                     scraper.scraping_status['status'] = 'stopped'
                     scraper._broadcast_status()
                 break
-            
+
             try:
                 data = scraper.extract_detailed_data(
-                    url, 
-                    total_urls=total_urls, 
+                    url,
+                    total_urls=total_urls,
                     current_index=index,
                     db_session=db,
                     target_site=target_site
                 )
-                
+
                 # Update progress after extraction
                 scraper.scraping_status['urls_scraped'] = index
                 scraper.scraping_status['current_url'] = None
                 scraper._broadcast_status()
-                
+
                 # Check if extraction was stopped
                 if data and data.get('error') == 'Scraping was stopped':
                     logger.info("Extraction stopped by user request.")
@@ -124,10 +126,11 @@ def _scrape_detailed_listings_task(
                         scraper.scraping_status['status'] = 'stopped'
                         scraper._broadcast_status()
                     break
-                
+
                 # Data is already saved in extract_detailed_data if db_session was provided
                 if data and 'error' not in data:
-                    logger.info(f"Processed listing: {url} ({index}/{total_urls})")
+                    logger.info(
+                        f"Processed listing: {url} ({index}/{total_urls})")
             except Exception as e:
                 logger.error(f"Error scraping {url}: {e}")
                 import traceback
@@ -137,21 +140,22 @@ def _scrape_detailed_listings_task(
                 scraper.scraping_status['current_url'] = None
                 scraper._broadcast_status()
                 continue
-        
+
         # Reset flags after loop completes
         scraper.is_scraping = False
         scraper.should_stop = False
-        
+
         # Update final status if still in details mode
         if scraper.scraping_status.get('type') == 'details':
             if scraper.scraping_status.get('status') != 'stopped':
                 scraper.scraping_status['status'] = 'completed'
             scraper._broadcast_status()
-        
+
         logger.info(f"Completed scraping detailed listings from {target_site}")
-        
+
     except Exception as e:
-        logger.error(f"Error scraping detailed listings from {target_site}: {e}")
+        logger.error(
+            f"Error scraping detailed listings from {target_site}: {e}")
         import traceback
         logger.error(traceback.format_exc())
         raise
@@ -168,20 +172,22 @@ def _scrape_all_with_details_task(
     db = SessionLocal()
     try:
         logger.info(f"Starting full scrape of {target_site}")
-        
+
         # Step 1: Scrape all listings
         _scrape_all_listings_task(target_site, max_pages)
-        
+
         # Step 2: Get URLs from database and scrape details
         db_service = DatabaseService(db)
-        listings = db_service.get_all_listings(lightweight=True, target_site=target_site)
-        urls = [listing['rawUrl'] for listing in listings if 'rawUrl' in listing]
-        
+        listings = db_service.get_all_listings(
+            lightweight=True, target_site=target_site)
+        urls = [listing['rawUrl']
+                for listing in listings if 'rawUrl' in listing]
+
         # Scrape details
         _scrape_detailed_listings_task(urls, target_site)
-        
+
         logger.info(f"Completed full scrape of {target_site}")
-        
+
     except Exception as e:
         logger.error(f"Error in full scrape of {target_site}: {e}")
         import traceback
@@ -199,7 +205,7 @@ async def scrape_all_listings(
 ):
     """
     Scrape all listings from a site (basic info: url, title, price)
-    
+
     - **target_site**: jiji or kupatana
     - **max_pages**: Maximum number of pages to scrape (optional)
     - **save_to_db**: Whether to save results to database (default: true)
@@ -220,7 +226,7 @@ async def scrape_all_listings(
                 )
         else:
             raise ValueError(f"Unknown target site: {request.target_site}")
-        
+
         if request.save_to_db:
             # Run scraping in background and save to DB
             background_tasks.add_task(
@@ -228,7 +234,7 @@ async def scrape_all_listings(
                 target_site=request.target_site,
                 max_pages=request.max_pages
             )
-            
+
             return {
                 "status": "started",
                 "message": f"Scraping {request.target_site} listings in background",
@@ -242,8 +248,9 @@ async def scrape_all_listings(
                 scraper = KupatanaService.get_instance()
             else:
                 raise ValueError(f"Unknown target site: {request.target_site}")
-            listings = scraper.get_all_listings_basic(max_pages=request.max_pages)
-            
+            listings = scraper.get_all_listings_basic(
+                max_pages=request.max_pages)
+
             return {
                 "status": "completed",
                 "message": f"Scraped {len(listings)} listings",
@@ -251,7 +258,7 @@ async def scrape_all_listings(
                 "count": len(listings),
                 "data": listings
             }
-                    
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -264,7 +271,7 @@ async def scrape_detailed_listings(
 ):
     """
     Scrape detailed data for selected URLs
-    
+
     - **urls**: List of listing URLs to scrape
     - **target_site**: jiji or kupatana
     - **save_to_db**: Whether to save results to database (default: true)
@@ -285,7 +292,7 @@ async def scrape_detailed_listings(
                 )
         else:
             raise ValueError(f"Unknown target site: {request.target_site}")
-        
+
         if request.save_to_db:
             # Run scraping in background and save to DB
             background_tasks.add_task(
@@ -293,7 +300,7 @@ async def scrape_detailed_listings(
                 urls=request.urls,
                 target_site=request.target_site
             )
-            
+
             return {
                 "status": "started",
                 "message": f"Scraping {len(request.urls)} detailed listings in background",
@@ -308,7 +315,7 @@ async def scrape_detailed_listings(
                 scraper = KupatanaService.get_instance()
             else:
                 raise ValueError(f"Unknown target site: {request.target_site}")
-            
+
             detailed_listings = []
             for url in request.urls:
                 try:
@@ -322,7 +329,7 @@ async def scrape_detailed_listings(
                 except Exception as e:
                     logger.error(f"Error scraping {url}: {e}")
                     continue
-            
+
             return {
                 "status": "completed",
                 "message": f"Scraped {len(detailed_listings)} detailed listings",
@@ -331,7 +338,7 @@ async def scrape_detailed_listings(
                 "success_count": len(detailed_listings),
                 "data": detailed_listings
             }
-                    
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -344,11 +351,11 @@ async def scrape_all_detailed(
 ):
     """
     Scrape all listings and their detailed data from a site
-    
+
     This is a two-step process:
     1. Scrape all listing URLs (basic info)
     2. Scrape detailed data for each URL
-    
+
     - **target_site**: jiji or kupatana
     - **max_pages**: Maximum number of pages to scrape (optional)
     - **save_to_db**: Whether to save results to database (default: true)
@@ -369,14 +376,14 @@ async def scrape_all_detailed(
                 )
         else:
             raise ValueError(f"Unknown target site: {request.target_site}")
-        
+
         # This operation can take a long time, so always run in background
         background_tasks.add_task(
             _scrape_all_with_details_task,
             target_site=request.target_site,
             max_pages=request.max_pages
         )
-        
+
         return {
             "status": "started",
             "message": f"Scraping all {request.target_site} listings with details in background. This may take a while.",
@@ -393,49 +400,56 @@ def _scrape_all_details_task(
     # Create a new database session for the background task
     db = SessionLocal()
     try:
-        logger.info(f"Starting to scrape details for all existing {target_site} listings")
-        
+        logger.info(
+            f"Starting to scrape details for all existing {target_site} listings")
+
         # Get all listing URLs from database
         db_service = DatabaseService(db)
-        listings = db_service.get_all_listings(lightweight=True, target_site=target_site)
-        
+        listings = db_service.get_all_listings(
+            lightweight=True, target_site=target_site)
+
         if not listings:
             logger.warning(f"No listings found in database for {target_site}")
             return
-        
+
         # Filter listings: prioritize those without details (no agent_name)
         listings_without_details = []
         listings_with_details = []
-        
+
         for listing in listings:
             if 'rawUrl' not in listing:
                 continue
-            
+
             # Check if listing has details (agent_name is present and not empty)
-            has_details = listing.get('agentName') is not None and listing.get('agentName') != ''
-            
+            has_details = listing.get(
+                'agentName') is not None and listing.get('agentName') != ''
+
             if has_details:
                 listings_with_details.append(listing['rawUrl'])
             else:
                 listings_without_details.append(listing['rawUrl'])
-        
+
         # Prioritize listings without details first
         urls = listings_without_details + listings_with_details
-        
+
         if not urls:
-            logger.warning(f"No valid URLs found in database for {target_site}")
+            logger.warning(
+                f"No valid URLs found in database for {target_site}")
             return
-        
-        logger.info(f"Found {len(urls)} listings in database for {target_site}:")
-        logger.info(f"  - {len(listings_without_details)} without details (will be scraped first)")
-        logger.info(f"  - {len(listings_with_details)} with details (will be scraped after)")
+
+        logger.info(
+            f"Found {len(urls)} listings in database for {target_site}:")
+        logger.info(
+            f"  - {len(listings_without_details)} without details (will be scraped first)")
+        logger.info(
+            f"  - {len(listings_with_details)} with details (will be scraped after)")
         logger.info(f"Starting to scrape details...")
-        
+
         # Scrape details for all URLs (prioritized order)
         _scrape_detailed_listings_task(urls, target_site)
-        
+
         logger.info(f"Completed scraping details for {target_site}")
-        
+
     except Exception as e:
         logger.error(f"Error scraping details for {target_site}: {e}")
         import traceback
@@ -453,7 +467,7 @@ async def scrape_all_details(
 ):
     """
     Scrape detailed data for all existing listings in the database
-    
+
     - **target_site**: jiji or kupatana
     - **save_to_db**: Whether to save results to database (default: true)
     """
@@ -473,25 +487,26 @@ async def scrape_all_details(
                 )
         else:
             raise ValueError(f"Unknown target site: {request.target_site}")
-        
+
         if request.save_to_db:
             # Get count of listings first
             db_service = DatabaseService(db)
-            listings = db_service.get_all_listings(lightweight=True, target_site=request.target_site)
+            listings = db_service.get_all_listings(
+                lightweight=True, target_site=request.target_site)
             urls_count = len(listings)
-            
+
             if urls_count == 0:
                 raise HTTPException(
                     status_code=404,
                     detail=f"No listings found in database for {request.target_site}. Please scrape listings first."
                 )
-            
+
             # Run scraping in background
             background_tasks.add_task(
                 _scrape_all_details_task,
                 target_site=request.target_site
             )
-            
+
             return {
                 "status": "started",
                 "message": f"Scraping details for {urls_count} existing {request.target_site} listings in background",
@@ -503,7 +518,7 @@ async def scrape_all_details(
                 status_code=400,
                 detail="Synchronous scraping of all details is not supported. Please use save_to_db=true."
             )
-                    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -516,7 +531,7 @@ async def stop_scraping(
 ):
     """
     Stop the current scraping operation for a specific site
-    
+
     - **target_site**: jiji or kupatana
     """
     try:
@@ -560,22 +575,22 @@ async def stop_scraping(
 async def get_scraping_status():
     """
     Get the current scraping status for all scrapers
-    
+
     Returns the current status of both Jiji and Kupatana scrapers,
     including whether they are currently scraping and their progress.
     """
     try:
         jiji_status = None
         kupatana_status = None
-        
+
         # Get Jiji status if instance exists
         if JijiService.is_ready():
             jiji_status = JijiService.get_status()
-        
+
         # Get Kupatana status if instance exists
         if KupatanaService.is_ready():
             kupatana_status = KupatanaService.get_status()
-        
+
         return {
             "jiji": jiji_status,
             "kupatana": kupatana_status

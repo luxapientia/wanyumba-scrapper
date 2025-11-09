@@ -10,7 +10,7 @@ from typing import Optional
 async def verify_api_key(x_api_key: Optional[str] = Header(None)):
     """
     Verify API key (optional, for future authentication)
-    
+
     Currently disabled for development.
     Uncomment and configure when ready for production.
     """
@@ -25,4 +25,3 @@ def get_database_service(db: Session = Depends(get_db)):
     """Get database service instance"""
     from app.services.database_service import DatabaseService
     return DatabaseService(db)
-

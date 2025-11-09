@@ -3,15 +3,15 @@
 Database initialization script
 Run this to create the database tables
 """
+from sqlalchemy import text
+from app.core.config import settings
+from app.core.database import init_db, drop_db, engine
 import sys
 import os
 
 # Add parent directory to path to import app modules
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-from app.core.database import init_db, drop_db, engine
-from app.core.config import settings
-from sqlalchemy import text
+sys.path.insert(0, os.path.abspath(
+    os.path.join(os.path.dirname(__file__), '..')))
 
 
 def check_database_connection():
@@ -40,22 +40,23 @@ def main():
     print("Real Estate Database Initialization")
     print("="*70)
     print(f"\nDatabase URL: {settings.DATABASE_URL}\n")
-    
+
     # Check if user wants to drop existing tables
     if len(sys.argv) > 1 and sys.argv[1] == '--drop':
-        response = input("⚠️  WARNING: This will DROP all existing tables. Continue? (yes/no): ")
+        response = input(
+            "⚠️  WARNING: This will DROP all existing tables. Continue? (yes/no): ")
         if response.lower() == 'yes':
             print("\n🗑️  Dropping existing tables...")
             drop_db()
         else:
             print("Aborted.")
             return
-    
+
     # Check database connection
     print("🔍 Checking database connection...")
     if not check_database_connection():
         return
-    
+
     # Initialize database
     print("\n📊 Creating database tables...")
     try:
@@ -76,4 +77,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

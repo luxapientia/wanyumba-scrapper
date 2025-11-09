@@ -9,13 +9,13 @@ from app.core.config import settings
 def main():
     """Start the FastAPI server"""
     print("="*70)
-    print(f"🚀 Starting {settings.APP_NAME} v{settings.APP_VERSION}")
+    print(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
     print("="*70)
-    print(f"\n📡 Server: http://{settings.API_HOST}:{settings.API_PORT}")
-    print(f"📚 API Docs: http://{settings.API_HOST}:{settings.API_PORT}/docs")
-    print(f"🔍 ReDoc: http://{settings.API_HOST}:{settings.API_PORT}/redoc")
+    print(f"\nServer: http://{settings.API_HOST}:{settings.API_PORT}")
+    print(f"API Docs: http://{settings.API_HOST}:{settings.API_PORT}/docs")
+    print(f"ReDoc: http://{settings.API_HOST}:{settings.API_PORT}/redoc")
     print("\n" + "="*70 + "\n")
-    
+
     uvicorn.run(
         "app.main:app",
         host=settings.API_HOST,
@@ -27,4 +27,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

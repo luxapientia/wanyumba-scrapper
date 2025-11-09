@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 def create_application() -> FastAPI:
     """Create and configure FastAPI application"""
-    
+
     app = FastAPI(
         title=settings.APP_NAME,
         version=settings.APP_VERSION,
@@ -29,7 +29,7 @@ def create_application() -> FastAPI:
         docs_url="/docs",
         redoc_url="/redoc"
     )
-    
+
     # Add CORS middleware
     app.add_middleware(
         CORSMiddleware,
@@ -38,45 +38,46 @@ def create_application() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    
+
     # Include API router with prefix
     app.include_router(api_router, prefix=settings.API_PREFIX)
-    
+
     # Startup event
     @app.on_event("startup")
     async def startup_event():
         logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
         logger.info(f"API documentation available at: /docs")
-        
+
         # Initialize database tables if they don't exist
         try:
             init_db()
             logger.info("✓ Database initialized successfully")
         except Exception as e:
             logger.error(f"✗ Database initialization failed: {e}")
-        
+
         # Initialize scrapers with delay between each to avoid conflicts
         logger.info("Initializing scrapers...")
-        
+
         try:
             JijiService.get_instance()
         except Exception as e:
             logger.error(f"✗ Failed to initialize Jiji scraper: {e}")
-        
+
         # Small delay before starting second browser to avoid conflicts
         import asyncio
         await asyncio.sleep(3)
-        
+
         try:
             KupatanaService.get_instance()
         except Exception as e:
             logger.error(f"✗ Failed to initialize Kupatana scraper: {e}")
-        
+
         # Log scraper status
         jiji_status = "ready" if JijiService.is_ready() else "not initialized"
         kupatana_status = "ready" if KupatanaService.is_ready() else "not initialized"
-        logger.info(f"✓ Scraper status: jiji={jiji_status}, kupatana={kupatana_status}")
-    
+        logger.info(
+            f"✓ Scraper status: jiji={jiji_status}, kupatana={kupatana_status}")
+
     # Shutdown event
     @app.on_event("shutdown")
     async def shutdown_event():
@@ -84,7 +85,7 @@ def create_application() -> FastAPI:
         JijiService.close_instance()
         KupatanaService.close_instance()
         logger.info("✓ Shutdown complete")
-    
+
     # Root endpoint
     @app.get("/")
     async def root():
@@ -98,10 +99,9 @@ def create_application() -> FastAPI:
                 "kupatana": "ready" if KupatanaService.is_ready() else "not initialized"
             }
         }
-    
+
     return app
 
 
 # Create application instance
 app = create_application()
-

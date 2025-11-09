@@ -7,8 +7,10 @@ from typing import List, Optional, Dict, Any
 
 class ScrapeAllRequest(BaseModel):
     """Request to scrape all listings from a site"""
-    target_site: str = Field(..., description="Site to scrape (jiji, kupatana)")
-    max_pages: Optional[int] = Field(None, description="Maximum pages to scrape")
+    target_site: str = Field(...,
+                             description="Site to scrape (jiji, kupatana)")
+    max_pages: Optional[int] = Field(
+        None, description="Maximum pages to scrape")
     headless: bool = Field(True, description="Run browser in headless mode")
     save_to_db: bool = Field(True, description="Save results to database")
 
@@ -16,7 +18,8 @@ class ScrapeAllRequest(BaseModel):
 class ScrapeSelectedRequest(BaseModel):
     """Request to scrape detailed data for selected URLs"""
     urls: List[str] = Field(..., description="List of URLs to scrape")
-    target_site: str = Field(..., description="Site to scrape (jiji, kupatana)")
+    target_site: str = Field(...,
+                             description="Site to scrape (jiji, kupatana)")
     headless: bool = Field(True, description="Run browser in headless mode")
     save_to_db: bool = Field(True, description="Save results to database")
 
@@ -42,10 +45,13 @@ class ScrapeDetailedResponse(BaseModel):
 
 class StopScrapingRequest(BaseModel):
     """Request to stop scraping operation"""
-    target_site: str = Field(..., description="Site to stop scraping (jiji, kupatana)")
+    target_site: str = Field(...,
+                             description="Site to stop scraping (jiji, kupatana)")
 
 
 class ScrapingStatusResponse(BaseModel):
     """Response for scraping status"""
-    jiji: Optional[Dict[str, Any]] = Field(None, description="Jiji scraper status")
-    kupatana: Optional[Dict[str, Any]] = Field(None, description="Kupatana scraper status")
+    jiji: Optional[Dict[str, Any]] = Field(
+        None, description="Jiji scraper status")
+    kupatana: Optional[Dict[str, Any]] = Field(
+        None, description="Kupatana scraper status")

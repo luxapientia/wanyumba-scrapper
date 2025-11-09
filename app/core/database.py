@@ -40,7 +40,7 @@ def init_db():
     """
     # Import models to register them with Base
     from app.models import real_estate  # noqa
-    
+
     Base.metadata.create_all(bind=engine)
     print("✅ Database tables created successfully!")
 
@@ -51,4 +51,3 @@ def drop_db():
     """
     Base.metadata.drop_all(bind=engine)
     print("⚠️ All database tables dropped!")
-

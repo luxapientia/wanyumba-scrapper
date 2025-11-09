@@ -24,7 +24,7 @@ class ListingResponse(BaseModel):
     currency: Optional[str] = None
     location: Optional[str] = None
     description: Optional[str] = None
-    
+
     bedrooms: Optional[int] = None
     bathrooms: Optional[int] = None
     parking_space: Optional[int] = None
@@ -32,15 +32,15 @@ class ListingResponse(BaseModel):
     property_size_unit: Optional[str] = None
     property_type: Optional[str] = None
     listing_type: Optional[str] = None
-    
+
     attributes: Optional[Dict[str, Any]] = None
     images: Optional[List[str]] = None
     facilities: Optional[List[str]] = None
-    
+
     contact_name: Optional[str] = None
     contact_phone: Optional[List[str]] = None
     contact_email: Optional[List[str]] = None
-    
+
     created_at: datetime
     updated_at: datetime
 
@@ -57,7 +57,8 @@ class ListingCreateRequest(BaseModel):
 class ListingBulkCreateRequest(BaseModel):
     """Request to bulk create/update listings"""
     target_site: str = Field(..., description="Site name (jiji, kupatana)")
-    data_list: List[Dict[str, Any]] = Field(..., description="List of scraper data dictionaries")
+    data_list: List[Dict[str, Any]
+                    ] = Field(..., description="List of scraper data dictionaries")
 
 
 class StatisticsResponse(BaseModel):
@@ -66,4 +67,3 @@ class StatisticsResponse(BaseModel):
     jiji_listings: int
     kupatana_listings: int
     last_updated: str
-
