@@ -4,6 +4,7 @@ Database service for CRUD operations
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from app.models.real_estate import RealEstateListing
+from app.models.agent import Agent
 from typing import List, Optional, Dict
 from datetime import datetime
 import logging
@@ -16,6 +17,59 @@ class DatabaseService:
     
     def __init__(self, db: Session):
         self.db = db
+    
+    def create_or_update_agent(self, phone: str, name: Optional[str] = None, email: Optional[str] = None) -> Optional[Agent]:
+        """
+        Create new agent or update existing one based on phone number (unique key)
+        
+        Args:
+            phone: Agent phone number (unique identifier)
+            name: Agent name
+            email: Agent email
+            
+        Returns:
+            Agent object or None if phone is invalid
+        """
+        if not phone:
+            logger.debug("No phone provided, skipping agent creation")
+            return None
+        
+        # Check if agent exists by phone
+        existing_agent = self.db.query(Agent).filter(
+            Agent.phone == phone
+        ).first()
+        
+        if existing_agent:
+            # Update existing agent if new data is provided
+            updated = False
+            if name and name != existing_agent.name:
+                existing_agent.name = name
+                updated = True
+            if email and email != existing_agent.email:
+                existing_agent.email = email
+                updated = True
+            
+            if updated:
+                existing_agent.updated_at = datetime.utcnow()
+                self.db.commit()
+                self.db.refresh(existing_agent)
+                logger.debug("Updated agent with phone: %s", phone)
+            else:
+                logger.debug("Agent with phone %s already exists, no updates needed", phone)
+            
+            return existing_agent
+        else:
+            # Create new agent
+            agent = Agent(
+                phone=phone,
+                name=name,
+                email=email
+            )
+            self.db.add(agent)
+            self.db.commit()
+            self.db.refresh(agent)
+            logger.info("Created new agent with phone: %s", phone)
+            return agent
     
     def create_or_update_listing(self, data: dict, target_site: str) -> RealEstateListing:
         """
@@ -31,6 +85,17 @@ class DatabaseService:
         raw_url = data.get('raw_url')
         if not raw_url:
             raise ValueError("raw_url is required in data dictionary")
+        
+        # Save agent to database if agent_phone is provided
+        agent_phone = data.get('agent_phone')
+        if agent_phone:
+            agent_name = data.get('agent_name')
+            agent_email = data.get('agent_email')
+            self.create_or_update_agent(
+                phone=agent_phone,
+                name=agent_name,
+                email=agent_email
+            )
         
         # Check if listing exists
         existing = self.db.query(RealEstateListing).filter(
