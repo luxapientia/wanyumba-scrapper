@@ -71,6 +71,83 @@ class DatabaseService:
             logger.info("Created new agent with phone: %s", phone)
             return agent
     
+    def get_agents(
+        self,
+        page: int = 1,
+        limit: int = 25,
+        search: Optional[str] = None,
+        sort_by: str = 'created_at',
+        sort_order: str = 'desc'
+    ) -> Dict:
+        """
+        Get paginated agents with optional search, filter, and sort
+        
+        Args:
+            page: Page number (1-indexed)
+            limit: Items per page
+            search: Search term for name, phone, email
+            sort_by: Field to sort by
+            sort_order: 'asc' or 'desc'
+            
+        Returns:
+            Dictionary with agents list and pagination info
+        """
+        # Start with base query
+        query = self.db.query(Agent)
+        
+        # Apply search filter
+        if search:
+            search_filter = or_(
+                Agent.name.ilike(f'%{search}%'),
+                Agent.phone.ilike(f'%{search}%'),
+                Agent.email.ilike(f'%{search}%')
+            )
+            query = query.filter(search_filter)
+        
+        # Get total count before pagination
+        total = query.count()
+        
+        # Apply sorting
+        if hasattr(Agent, sort_by):
+            order_column = getattr(Agent, sort_by)
+            if sort_order.lower() == 'desc':
+                query = query.order_by(order_column.desc())
+            else:
+                query = query.order_by(order_column.asc())
+        
+        # Apply pagination
+        offset = (page - 1) * limit
+        agents = query.offset(offset).limit(limit).all()
+        
+        # Convert to dict
+        agents_data = [agent.to_dict() for agent in agents]
+        
+        return {
+            'agents': agents_data,
+            'total': total,
+            'page': page,
+            'limit': limit,
+            'pages': (total + limit - 1) // limit
+        }
+    
+    def get_agent_by_id(self, agent_id: int) -> Optional[Agent]:
+        """Get agent by ID"""
+        return self.db.query(Agent).filter(Agent.id == agent_id).first()
+    
+    def get_agent_by_phone(self, phone: str) -> Optional[Agent]:
+        """Get agent by phone number"""
+        return self.db.query(Agent).filter(Agent.phone == phone).first()
+    
+    def delete_agent(self, agent_id: int) -> bool:
+        """Delete agent by ID"""
+        agent = self.get_agent_by_id(agent_id)
+        if agent:
+            self.db.delete(agent)
+            self.db.commit()
+            logger.info("Deleted agent with id: %s", agent_id)
+            return True
+        return False
+    
     def create_or_update_listing(self, data: dict, target_site: str) -> RealEstateListing:
         """
         Create new listing or update existing one
