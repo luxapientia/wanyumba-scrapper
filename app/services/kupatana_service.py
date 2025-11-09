@@ -46,7 +46,7 @@ class KupatanaService:
         self.is_scraping = False  # Track if currently scraping
         self.should_stop = False  # Flag to stop scraping gracefully
         self.scraping_status = {
-            'type': None,  # 'listings' or 'details' or None
+            'type': None,  # 'listings' or 'details' or 'auto_cycle' or None
             'target_site': None,
             'current_page': 0,
             'total_pages': None,
@@ -56,7 +56,11 @@ class KupatanaService:
             'current_url': None,
             'total_urls': 0,
             'urls_scraped': 0,
-            'status': 'idle'  # 'idle', 'scraping', 'completed', 'error', 'stopped'
+            'status': 'idle',  # 'idle', 'scraping', 'completed', 'error', 'stopped'
+            'auto_cycle_running': False,
+            'cycle_number': None,
+            'phase': None,  # 'basic_listings', 'details', 'waiting'
+            'wait_minutes': None,
         }
 
     @classmethod
@@ -257,6 +261,12 @@ class KupatanaService:
         self.is_scraping = True
         self.should_stop = False
 
+        # Preserve auto cycle fields if they exist
+        auto_cycle_running = self.scraping_status.get('auto_cycle_running', False)
+        cycle_number = self.scraping_status.get('cycle_number')
+        phase = self.scraping_status.get('phase')
+        wait_minutes = self.scraping_status.get('wait_minutes')
+
         # Initialize scraping status
         self.scraping_status = {
             'type': 'listings',
@@ -269,7 +279,11 @@ class KupatanaService:
             'current_url': None,
             'total_urls': 0,
             'urls_scraped': 0,
-            'status': 'scraping'
+            'status': 'scraping',
+            'auto_cycle_running': auto_cycle_running,
+            'cycle_number': cycle_number,
+            'phase': phase if auto_cycle_running else None,
+            'wait_minutes': wait_minutes,
         }
         self._broadcast_status()
 
@@ -513,16 +527,24 @@ class KupatanaService:
                 logger.info(f"💾 Total saved to database: {total_saved} listings")
             return all_listings
         finally:
+            # Check stop flag before resetting it
+            was_stopped = self.should_stop
+            
             # Always reset scraping status and stop flag
             self.is_scraping = False
             self.should_stop = False
             
-            # Update final status
-            if self.should_stop:
+            # Update final status (preserve auto cycle fields)
+            if was_stopped:
                 self.scraping_status['status'] = 'stopped'
             else:
                 self.scraping_status['status'] = 'completed'
             self.scraping_status['current_page'] = 0
+            
+            # If not part of auto cycle, clear phase
+            if not self.scraping_status.get('auto_cycle_running'):
+                self.scraping_status['phase'] = None
+            
             self._broadcast_status()
                 
             logger.info("Scraping completed, status reset")

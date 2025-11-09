@@ -83,6 +83,12 @@ def _scrape_detailed_listings_task(
         logger.info(
             f"Starting to scrape {len(urls)} detailed listings from {target_site}")
 
+        # Preserve auto cycle fields if they exist
+        auto_cycle_running = scraper.scraping_status.get('auto_cycle_running', False)
+        cycle_number = scraper.scraping_status.get('cycle_number')
+        phase = scraper.scraping_status.get('phase')
+        wait_minutes = scraper.scraping_status.get('wait_minutes')
+
         # Initialize scraping status for details
         scraper.is_scraping = True
         scraper.should_stop = False
@@ -97,7 +103,11 @@ def _scrape_detailed_listings_task(
             'current_url': None,
             'total_urls': len(urls),
             'urls_scraped': 0,
-            'status': 'scraping'
+            'status': 'scraping',
+            'auto_cycle_running': auto_cycle_running,
+            'cycle_number': cycle_number,
+            'phase': phase if auto_cycle_running else None,
+            'wait_minutes': wait_minutes,
         }
         scraper._broadcast_status()
 
@@ -234,15 +244,12 @@ def _auto_cycle_scraping_task(
                 break
             
             # Update status - Phase 1: Scraping basic listings
-            scraper.scraping_status = {
-                'type': 'auto_cycle',
-                'cycle_number': cycle_number,
-                'phase': 'basic_listings',
-                'current_page': 0,
-                'total_pages': max_pages or 'unknown',
-                'listings_found': 0,
-                'status': 'running'
-            }
+            scraper.scraping_status['auto_cycle_running'] = True
+            scraper.scraping_status['cycle_number'] = cycle_number
+            scraper.scraping_status['phase'] = 'basic_listings'
+            scraper.scraping_status['wait_minutes'] = None
+            scraper.scraping_status['status'] = 'scraping'
+            scraper._broadcast_status()
             
             # Phase 1: Scrape basic listings
             logger.info(f"[Cycle #{cycle_number}] Phase 1: Scraping basic listings from {target_site}")
@@ -255,12 +262,12 @@ def _auto_cycle_scraping_task(
             logger.info(f"[Cycle #{cycle_number}] Phase 2: Scraping details for incomplete listings from {target_site}")
             
             # Update status - Phase 2: Scraping details
-            scraper.scraping_status = {
-                'type': 'auto_cycle',
-                'cycle_number': cycle_number,
-                'phase': 'details',
-                'status': 'running'
-            }
+            scraper.scraping_status['auto_cycle_running'] = True
+            scraper.scraping_status['cycle_number'] = cycle_number
+            scraper.scraping_status['phase'] = 'details'
+            scraper.scraping_status['wait_minutes'] = None
+            scraper.scraping_status['status'] = 'scraping'
+            scraper._broadcast_status()
             
             db_service = DatabaseService(db)
             
@@ -289,13 +296,18 @@ def _auto_cycle_scraping_task(
             logger.info(f"[Cycle #{cycle_number}] Completed. Waiting {cycle_delay_minutes} minutes before next cycle...")
             
             # Update status - Waiting
-            scraper.scraping_status = {
-                'type': 'auto_cycle',
-                'cycle_number': cycle_number,
-                'phase': 'waiting',
-                'wait_minutes': cycle_delay_minutes,
-                'status': 'waiting'
-            }
+            scraper.scraping_status['auto_cycle_running'] = True
+            scraper.scraping_status['cycle_number'] = cycle_number
+            scraper.scraping_status['phase'] = 'waiting'
+            scraper.scraping_status['wait_minutes'] = cycle_delay_minutes
+            scraper.scraping_status['status'] = 'idle'
+            scraper.scraping_status['type'] = None
+            scraper.scraping_status['current_page'] = 0
+            scraper.scraping_status['pages_scraped'] = 0
+            scraper.scraping_status['listings_found'] = 0
+            scraper.scraping_status['current_url'] = None
+            scraper.scraping_status['urls_scraped'] = 0
+            scraper._broadcast_status()
             
             # Sleep in chunks to allow for responsive stopping
             wait_seconds = cycle_delay_minutes * 60
@@ -317,6 +329,22 @@ def _auto_cycle_scraping_task(
     # Cleanup when stopping
     auto_cycle_status[target_site]['running'] = False
     auto_cycle_status[target_site]['thread'] = None
+    
+    # Clear auto cycle fields from scraper status
+    if target_site.lower() == 'jiji':
+        scraper = JijiService.get_instance()
+    elif target_site.lower() == 'kupatana':
+        scraper = KupatanaService.get_instance()
+    else:
+        scraper = None
+    
+    if scraper:
+        scraper.scraping_status['auto_cycle_running'] = False
+        scraper.scraping_status['cycle_number'] = None
+        scraper.scraping_status['phase'] = None
+        scraper.scraping_status['wait_minutes'] = None
+        scraper._broadcast_status()
+    
     logger.info(f"Auto cycle stopped for {target_site} after {cycle_number} cycles")
 
 
@@ -684,6 +712,19 @@ async def stop_scraping(
             auto_cycle_status[target_site]['should_stop'] = True
             stopped_items.append(f"{target_site} auto cycle")
             logger.info(f"Stopping auto cycle for {target_site}")
+            
+            # Immediately clear auto cycle fields from scraper status
+            if target_site == 'jiji':
+                scraper = JijiService.get_instance()
+            else:
+                scraper = KupatanaService.get_instance()
+            
+            if scraper:
+                scraper.scraping_status['auto_cycle_running'] = False
+                scraper.scraping_status['cycle_number'] = None
+                scraper.scraping_status['phase'] = None
+                scraper.scraping_status['wait_minutes'] = None
+                scraper._broadcast_status()
         
         if not stopped_items:
             raise HTTPException(
