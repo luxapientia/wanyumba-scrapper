@@ -144,7 +144,7 @@ async def get_listings(
             "total": total,
             "page": page,
             "limit": limit,
-            "totalPages": total_pages
+            "pages": total_pages
         }
     except Exception as e:
         logger.error(f"Error fetching listings: {e}")

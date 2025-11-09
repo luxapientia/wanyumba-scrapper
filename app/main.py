@@ -58,25 +58,25 @@ def create_application() -> FastAPI:
         # Initialize scrapers with delay between each to avoid conflicts
         logger.info("Initializing scrapers...")
 
-        try:
-            JijiService.get_instance()
-        except Exception as e:
-            logger.error(f"✗ Failed to initialize Jiji scraper: {e}")
+        # try:
+        #     JijiService.get_instance()
+        # except Exception as e:
+        #     logger.error(f"✗ Failed to initialize Jiji scraper: {e}")
 
-        # Small delay before starting second browser to avoid conflicts
-        import asyncio
-        await asyncio.sleep(3)
+        # # Small delay before starting second browser to avoid conflicts
+        # import asyncio
+        # await asyncio.sleep(3)
 
-        try:
-            KupatanaService.get_instance()
-        except Exception as e:
-            logger.error(f"✗ Failed to initialize Kupatana scraper: {e}")
+        # try:
+        #     KupatanaService.get_instance()
+        # except Exception as e:
+        #     logger.error(f"✗ Failed to initialize Kupatana scraper: {e}")
 
-        # Log scraper status
-        jiji_status = "ready" if JijiService.is_ready() else "not initialized"
-        kupatana_status = "ready" if KupatanaService.is_ready() else "not initialized"
-        logger.info(
-            f"✓ Scraper status: jiji={jiji_status}, kupatana={kupatana_status}")
+        # # Log scraper status
+        # jiji_status = "ready" if JijiService.is_ready() else "not initialized"
+        # kupatana_status = "ready" if KupatanaService.is_ready() else "not initialized"
+        # logger.info(
+        #     f"✓ Scraper status: jiji={jiji_status}, kupatana={kupatana_status}")
 
     # Shutdown event
     @app.on_event("shutdown")

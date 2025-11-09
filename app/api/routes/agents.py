@@ -7,6 +7,7 @@ from typing import Optional
 from app.core.database import get_db
 from app.services.database_service import DatabaseService
 from app.api.schemas.agent import AgentsResponse, AgentDetail
+from app.api.schemas.listings import ListingsResponse
 import logging
 
 router = APIRouter()
@@ -71,6 +72,49 @@ async def get_agent(
     except Exception as e:
         logger.error("Error fetching agent %s: %s", agent_id, e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to fetch agent")
+
+
+@router.get("/{agent_id}/listings", response_model=ListingsResponse)
+async def get_agent_listings(
+    agent_id: int,
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(25, ge=1, le=100, description="Items per page"),
+    sortBy: Optional[str] = Query("created_at", description="Sort by field"),
+    sortOrder: Optional[str] = Query("desc", description="Sort order (asc, desc)"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get all listings for a specific agent
+    
+    - **agent_id**: Agent ID
+    - **page**: Page number (default: 1)
+    - **limit**: Items per page (default: 25, max: 100)
+    - **sortBy**: Field to sort by (default: created_at)
+    - **sortOrder**: Sort order - asc or desc (default: desc)
+    """
+    try:
+        db_service = DatabaseService(db)
+        
+        # First, get the agent to get their phone number
+        agent = db_service.get_agent_by_id(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        
+        # Get listings by agent phone
+        result = db_service.get_listings_by_agent(
+            agent_phone=agent.phone,
+            page=page,
+            limit=limit,
+            sort_by=sortBy,
+            sort_order=sortOrder
+        )
+        
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error fetching listings for agent %s: %s", agent_id, e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to fetch agent listings")
 
 
 @router.delete("/{agent_id}")

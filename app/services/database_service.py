@@ -454,6 +454,53 @@ class DatabaseService:
         
         return [listing.to_dict() for listing in listings]
 
+    def get_listings_by_agent(
+        self,
+        agent_phone: str,
+        page: int = 1,
+        limit: int = 25,
+        sort_by: str = 'created_at',
+        sort_order: str = 'desc'
+    ) -> Dict:
+        """
+        Get all listings for a specific agent with pagination
+        
+        Args:
+            agent_phone: Agent phone number
+            page: Page number (1-indexed)
+            limit: Items per page
+            sort_by: Field to sort by
+            sort_order: 'asc' or 'desc'
+            
+        Returns:
+            Dictionary with listings data and pagination info
+        """
+        query = self.db.query(RealEstateListing).filter(
+            RealEstateListing.agent_phone == agent_phone
+        )
+        
+        # Get total count
+        total = query.count()
+        
+        # Apply sorting
+        sort_column = getattr(RealEstateListing, sort_by, RealEstateListing.created_at)
+        if sort_order == 'desc':
+            query = query.order_by(sort_column.desc())
+        else:
+            query = query.order_by(sort_column.asc())
+        
+        # Apply pagination
+        offset = (page - 1) * limit
+        listings = query.offset(offset).limit(limit).all()
+        
+        return {
+            'listings': [listing.to_dict() for listing in listings],
+            'total': total,
+            'page': page,
+            'limit': limit,
+            'pages': (total + limit - 1) // limit
+        }
+
     def get_unique_property_types(self) -> List[str]:
         """
         Get all unique property types from the database (only from detailed listings)

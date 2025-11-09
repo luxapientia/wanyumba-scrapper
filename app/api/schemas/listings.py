@@ -53,7 +53,7 @@ class ListingsResponse(BaseModel):
     total: int
     page: int
     limit: int
-    totalPages: int
+    pages: int
 
 
 class StatisticsResponse(BaseModel):
