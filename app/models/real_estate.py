@@ -1,10 +1,9 @@
 """
 SQLAlchemy model for real estate listings
 """
-from sqlalchemy import Column, String, Text, Integer, Float, DateTime, JSON, ARRAY
-from sqlalchemy.sql import func
-from app.core.database import Base
 from datetime import datetime
+from sqlalchemy import Column, String, Text, Integer, Float, DateTime, ARRAY
+from app.core.database import Base
 
 
 class RealEstateListing(Base):
@@ -68,9 +67,8 @@ class RealEstateListing(Base):
     agent_profile_url = Column(String(500), nullable=True)
 
     # Timestamps
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True),
-                        server_default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
     def __repr__(self):
         return f"<RealEstateListing(raw_url='{self.raw_url}', title='{self.title}', source='{self.source}')>"

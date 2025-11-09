@@ -117,8 +117,8 @@ class DatabaseService:
             else:
                 # Partial update: Update only title, price, and price_currency
                 # Do NOT update updated_at for partial updates
-            if 'title' in data:
-                existing.title = data.get('title')
+                if 'title' in data:
+                    existing.title = data.get('title')
                 if 'price' in data:
                     existing.price = data.get('price')
                 if 'price_currency' in data:

@@ -695,7 +695,6 @@ class KupatanaService:
             parking_space = None
             property_size = None
             property_size_unit = None
-            facilities = []
             attributes = {}
             
             # Extract property type from categories section
