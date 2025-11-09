@@ -49,6 +49,17 @@ class StopScrapingRequest(BaseModel):
                              description="Site to stop scraping (jiji, kupatana)")
 
 
+class AutoCycleRequest(BaseModel):
+    """Request to start automatic scraping cycle"""
+    target_site: str = Field(...,
+                             description="Site to scrape (jiji or kupatana)")
+    max_pages: Optional[int] = Field(
+        None, description="Maximum pages to scrape per cycle")
+    cycle_delay_minutes: int = Field(
+        30, description="Delay between cycles in minutes (default: 30)")
+    headless: bool = Field(True, description="Run browser in headless mode")
+
+
 class ScrapingStatusResponse(BaseModel):
     """Response for scraping status"""
     jiji: Optional[Dict[str, Any]] = Field(
