@@ -2,7 +2,7 @@
 Database service for CRUD operations
 """
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_
+from sqlalchemy import or_
 from app.models.real_estate import RealEstateListing
 from typing import List, Optional, Dict
 from datetime import datetime
@@ -113,7 +113,7 @@ class DatabaseService:
                 # Update updated_at only for full updates
                 existing.updated_at = datetime.now()
                 logger.debug(
-                    f"Full update: Updated all fields for listing {raw_url}")
+                    "Full update: Updated all fields for listing %s", raw_url)
             else:
                 # Partial update: Update only title, price, and price_currency
                 # Do NOT update updated_at for partial updates
@@ -125,7 +125,7 @@ class DatabaseService:
                     existing.price_currency = data.get('price_currency')
 
                 logger.debug(
-                    f"Partial update: Updated title, price, price_currency for listing {raw_url} (updated_at not changed)")
+                    "Partial update: Updated title, price, price_currency for listing %s (updated_at not changed)", raw_url)
 
             self.db.commit()
             self.db.refresh(existing)
@@ -260,18 +260,23 @@ class DatabaseService:
 
     def get_statistics(self) -> Dict:
         """
-        Get database statistics
+        Get database statistics (only counts detailed listings with agent_name)
 
         Returns:
             Dictionary with statistics
         """
-        total = self.db.query(func.count(RealEstateListing.raw_url)).scalar()
-        jiji_count = self.db.query(func.count(RealEstateListing.raw_url)).filter(
-            RealEstateListing.source == 'jiji'
-        ).scalar()
-        kupatana_count = self.db.query(func.count(RealEstateListing.raw_url)).filter(
-            RealEstateListing.source == 'kupatana'
-        ).scalar()
+        # Only count listings with agent_name (scraped in detail)
+        total = self.db.query(RealEstateListing).filter(
+            RealEstateListing.agent_name.isnot(None)
+        ).count()
+        jiji_count = self.db.query(RealEstateListing).filter(
+            RealEstateListing.source == 'jiji',
+            RealEstateListing.agent_name.isnot(None)
+        ).count()
+        kupatana_count = self.db.query(RealEstateListing).filter(
+            RealEstateListing.source == 'kupatana',
+            RealEstateListing.agent_name.isnot(None)
+        ).count()
 
         return {
             'total_listings': total,
@@ -282,18 +287,19 @@ class DatabaseService:
 
     def search_listings(self, query: str, limit: int = 50) -> List[Dict]:
         """
-        Search listings by title, location, or description
+        Search listings by title, location, or description (only detailed listings)
 
         Args:
             query: Search query string
             limit: Maximum results
 
         Returns:
-            List of matching listings
+            List of matching listings with agent_name
         """
         search_term = f"%{query}%"
 
         listings = self.db.query(RealEstateListing).filter(
+            RealEstateListing.agent_name.isnot(None),  # Only detailed listings
             or_(
                 RealEstateListing.title.ilike(search_term),
                 RealEstateListing.address_text.ilike(search_term),
@@ -305,3 +311,19 @@ class DatabaseService:
         ).limit(limit).all()
 
         return [listing.to_dict() for listing in listings]
+
+    def get_unique_property_types(self) -> List[str]:
+        """
+        Get all unique property types from the database (only from detailed listings)
+
+        Returns:
+            List of unique property type strings (excluding None/null values)
+        """
+        property_types = self.db.query(RealEstateListing.property_type).filter(
+            RealEstateListing.agent_name.isnot(None),  # Only detailed listings
+            RealEstateListing.property_type.isnot(None),
+            RealEstateListing.property_type != ''
+        ).distinct().all()
+
+        # Extract strings from tuples and sort
+        return sorted([pt[0] for pt in property_types if pt[0]])

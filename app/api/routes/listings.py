@@ -13,6 +13,23 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+@router.get("/property-types", response_model=List[str])
+async def get_property_types(db: Session = Depends(get_db)):
+    """
+    Get all unique property types from the database
+    
+    Returns a sorted list of all property types that exist in the listings.
+    """
+    try:
+        db_service = DatabaseService(db)
+        property_types = db_service.get_unique_property_types()
+        return property_types
+    except Exception as e:
+        logger.error(f"Error fetching property types: {e}")
+        raise HTTPException(
+            status_code=500, detail="Failed to fetch property types")
+
+
 @router.get("/", response_model=ListingsResponse)
 async def get_listings(
     page: int = Query(1, ge=1, description="Page number"),
@@ -61,6 +78,9 @@ async def get_listings(
         from sqlalchemy import or_, and_
 
         query = db.query(RealEstateListing)
+
+        # Only fetch listings with agent_name (scraped in detail)
+        query = query.filter(RealEstateListing.agent_name.isnot(None))
 
         # Apply filters
         if source and source != 'all':
