@@ -13,30 +13,30 @@ logger = logging.getLogger(__name__)
 
 class DatabaseService:
     """Service class for database operations"""
-
+    
     def __init__(self, db: Session):
         self.db = db
-
+    
     def create_or_update_listing(self, data: dict, target_site: str) -> RealEstateListing:
         """
         Create new listing or update existing one
-
+        
         Args:
             data: Scraper data dictionary
             target_site: 'jiji', 'kupatana', etc.
-
+            
         Returns:
             RealEstateListing object
         """
         raw_url = data.get('raw_url')
         if not raw_url:
             raise ValueError("raw_url is required in data dictionary")
-
+        
         # Check if listing exists
         existing = self.db.query(RealEstateListing).filter(
             RealEstateListing.raw_url == raw_url
         ).first()
-
+        
         if existing:
             # Check if agent_name is in the data to determine update strategy
             has_agent_name = 'agent_name' in data and data.get(
@@ -117,8 +117,8 @@ class DatabaseService:
             else:
                 # Partial update: Update only title, price, and price_currency
                 # Do NOT update updated_at for partial updates
-                if 'title' in data:
-                    existing.title = data.get('title')
+            if 'title' in data:
+                existing.title = data.get('title')
                 if 'price' in data:
                     existing.price = data.get('price')
                 if 'price_currency' in data:
@@ -178,90 +178,90 @@ class DatabaseService:
             self.db.commit()
             self.db.refresh(listing)
             return listing
-
-    def get_all_listings(self, lightweight: bool = False,
-                         target_site: Optional[str] = None,
-                         limit: Optional[int] = None) -> List[Dict]:
+    
+    def get_all_listings(self, lightweight: bool = False, 
+                        target_site: Optional[str] = None,
+                        limit: Optional[int] = None) -> List[Dict]:
         """
         Get all listings from database
-
+        
         Args:
             lightweight: If True, return only raw_url, title, price, price_currency
             target_site: Filter by source ('jiji', 'kupatana', etc.)
             limit: Maximum number of results
-
+            
         Returns:
             List of dictionaries
         """
         query = self.db.query(RealEstateListing)
-
+        
         if target_site:
             query = query.filter(RealEstateListing.source == target_site)
-
+        
         query = query.order_by(RealEstateListing.created_at.desc())
-
+        
         if limit:
             query = query.limit(limit)
-
+        
         listings = query.all()
         return [listing.to_dict(include_details=not lightweight) for listing in listings]
-
+    
     def get_listing_by_url(self, url: str) -> Optional[Dict]:
         """
         Get single listing by URL
-
+        
         Args:
             url: Listing URL (raw_url)
-
+            
         Returns:
             Dictionary or None
         """
         listing = self.db.query(RealEstateListing).filter(
             RealEstateListing.raw_url == url
         ).first()
-
+        
         return listing.to_dict() if listing else None
-
+    
     def get_listings_by_urls(self, urls: List[str]) -> List[Dict]:
         """
         Get multiple listings by URLs
-
+        
         Args:
             urls: List of URLs (raw_url)
-
+            
         Returns:
             List of dictionaries
         """
         listings = self.db.query(RealEstateListing).filter(
             RealEstateListing.raw_url.in_(urls)
         ).all()
-
+        
         return [listing.to_dict() for listing in listings]
-
+    
     def delete_listing(self, url: str) -> bool:
         """
         Delete listing by URL
-
+        
         Args:
             url: Listing URL (raw_url)
-
+            
         Returns:
             True if deleted, False if not found
         """
         listing = self.db.query(RealEstateListing).filter(
             RealEstateListing.raw_url == url
         ).first()
-
+        
         if listing:
             self.db.delete(listing)
             self.db.commit()
             return True
         return False
-
+    
     def get_statistics(self) -> Dict:
         """
         Get database statistics (only counts detailed listings with agent_name)
-
+        
         Returns:
             Dictionary with statistics
         """
@@ -277,27 +277,27 @@ class DatabaseService:
             RealEstateListing.source == 'kupatana',
             RealEstateListing.agent_name.isnot(None)
         ).count()
-
+        
         return {
             'total_listings': total,
             'jiji_listings': jiji_count,
             'kupatana_listings': kupatana_count,
             'last_updated': datetime.now().isoformat()
         }
-
+    
     def search_listings(self, query: str, limit: int = 50) -> List[Dict]:
         """
         Search listings by title, location, or description (only detailed listings)
-
+        
         Args:
             query: Search query string
             limit: Maximum results
-
+            
         Returns:
             List of matching listings with agent_name
         """
         search_term = f"%{query}%"
-
+        
         listings = self.db.query(RealEstateListing).filter(
             RealEstateListing.agent_name.isnot(None),  # Only detailed listings
             or_(
@@ -309,7 +309,7 @@ class DatabaseService:
                 RealEstateListing.description.ilike(search_term)
             )
         ).limit(limit).all()
-
+        
         return [listing.to_dict() for listing in listings]
 
     def get_unique_property_types(self) -> List[str]:
