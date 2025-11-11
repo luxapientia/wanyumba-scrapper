@@ -51,6 +51,8 @@ async def get_listings(
         None, description="Filter by number of bedrooms"),
     city: Optional[str] = Query(None, description="Filter by city"),
     region: Optional[str] = Query(None, description="Filter by region"),
+    phone: Optional[str] = Query(
+        None, description="Filter by agent phone number"),
     db: Session = Depends(get_db)
 ):
     """
@@ -69,6 +71,7 @@ async def get_listings(
     - **bedrooms**: Filter by number of bedrooms
     - **city**: Filter by city
     - **region**: Filter by region
+    - **phone**: Filter by agent phone number (normalizes phone numbers for matching)
     """
     try:
         db_service = DatabaseService(db)
@@ -107,6 +110,28 @@ async def get_listings(
 
         if region:
             query = query.filter(RealEstateListing.region.ilike(f"%{region}%"))
+
+        if phone:
+            # Normalize phone number for matching (remove spaces, dashes, parentheses)
+            import re
+            normalized_phone = re.sub(r'[\s\-\(\)]', '', phone).strip()
+            
+            # Filter by agent_phone with normalized matching
+            # Try multiple patterns to catch different phone number formats
+            phone_patterns = [
+                normalized_phone,  # Exact normalized match
+                phone,  # Original format
+                f"%{normalized_phone}%",  # Contains normalized
+                f"%{phone}%",  # Contains original
+            ]
+            
+            # Create OR conditions for all patterns
+            phone_conditions = [
+                RealEstateListing.agent_phone.ilike(pattern) for pattern in phone_patterns
+            ]
+            
+            # Filter by agent_phone matching any of the patterns
+            query = query.filter(or_(*phone_conditions))
 
         if search:
             search_term = f"%{search}%"

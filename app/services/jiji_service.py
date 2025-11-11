@@ -1360,7 +1360,7 @@ class JijiService:
             # Convert property_size to living_area_sqm (assuming it's already in sqm)
             living_area_sqm = data.get("property_size")  # Already numeric
             # If unit is sqft, convert to sqm
-            property_size_unit = data.get("property_size_unit", "").lower()
+            property_size_unit = (data.get("property_size_unit") or "").lower()
             if living_area_sqm and "sqft" in property_size_unit:
                 living_area_sqm = living_area_sqm * 0.092903  # Convert sqft to sqm
 
