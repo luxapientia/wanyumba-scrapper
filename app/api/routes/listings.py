@@ -53,6 +53,8 @@ async def get_listings(
     region: Optional[str] = Query(None, description="Filter by region"),
     phone: Optional[str] = Query(
         None, description="Filter by agent phone number"),
+    excludeSourceListingIds: Optional[str] = Query(
+        None, description="Comma-separated list of source listing IDs to exclude"),
     db: Session = Depends(get_db)
 ):
     """
@@ -72,6 +74,7 @@ async def get_listings(
     - **city**: Filter by city
     - **region**: Filter by region
     - **phone**: Filter by agent phone number (normalizes phone numbers for matching)
+    - **excludeSourceListingIds**: Comma-separated list of source listing IDs to exclude (for filtering already-added properties)
     """
     try:
         db_service = DatabaseService(db)
@@ -145,6 +148,24 @@ async def get_listings(
                     RealEstateListing.region.ilike(search_term),
                 )
             )
+
+        # Exclude source listing IDs if provided
+        if excludeSourceListingIds:
+            # Parse comma-separated string into list and strip whitespace
+            exclude_ids = [
+                id.strip() 
+                for id in excludeSourceListingIds.split(',') 
+                if id.strip()
+            ]
+            if exclude_ids:
+                # Filter out listings with source_listing_id in the exclude list
+                # Include listings where source_listing_id is NULL or not in the exclude list
+                query = query.filter(
+                    or_(
+                        RealEstateListing.source_listing_id.is_(None),
+                        ~RealEstateListing.source_listing_id.in_(exclude_ids)
+                    )
+                )
 
         # Get total count before pagination
         total = query.count()
