@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     # Browser Profiles
     JIJI_PROFILE_DIR: str = "./jiji_browser_profile"
     KUPATANA_PROFILE_DIR: str = "./kupatana_browser_profile"
+    MAKAZIMAPYA_PROFILE_DIR: str = "./makazimapya_browser_profile"
 
     # API Settings
     API_HOST: str = "0.0.0.0"

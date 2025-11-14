@@ -61,8 +61,5 @@ class AutoCycleRequest(BaseModel):
 
 
 class ScrapingStatusResponse(BaseModel):
-    """Response for scraping status"""
-    jiji: Optional[Dict[str, Any]] = Field(
-        None, description="Jiji scraper status")
-    kupatana: Optional[Dict[str, Any]] = Field(
-        None, description="Kupatana scraper status")
+    """Response for scraping status - dynamic dictionary with scraper names as keys"""
+    model_config = {"extra": "allow"}  # Allow extra fields for dynamic scraper names

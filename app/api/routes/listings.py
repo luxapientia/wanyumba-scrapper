@@ -202,7 +202,7 @@ async def get_statistics(db: Session = Depends(get_db)):
     """
     Get database statistics
 
-    Returns counts of total listings, jiji listings, and kupatana listings
+    Returns counts of total listings, jiji listings, kupatana listings, and makazimapya listings
     """
     try:
         db_service = DatabaseService(db)

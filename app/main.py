@@ -8,6 +8,7 @@ from app.core.database import init_db
 from app.api import api_router
 from app.services.jiji_service import JijiService
 from app.services.kupatana_service import KupatanaService
+from app.services.makazimapya_service import MakaziMapyaService
 import logging
 
 # Configure logging
@@ -72,11 +73,20 @@ def create_application() -> FastAPI:
         except Exception as e:
             logger.error(f"✗ Failed to initialize Kupatana scraper: {e}")
 
+        # Small delay before starting third browser to avoid conflicts
+        await asyncio.sleep(3)
+
+        try:
+            MakaziMapyaService.get_instance()
+        except Exception as e:
+            logger.error(f"✗ Failed to initialize MakaziMapya scraper: {e}")
+
         # Log scraper status
         jiji_status = "ready" if JijiService.is_ready() else "not initialized"
         kupatana_status = "ready" if KupatanaService.is_ready() else "not initialized"
+        makazimapya_status = "ready" if MakaziMapyaService.is_ready() else "not initialized"
         logger.info(
-            f"✓ Scraper status: jiji={jiji_status}, kupatana={kupatana_status}")
+            f"✓ Scraper status: jiji={jiji_status}, kupatana={kupatana_status}, makazimapya={makazimapya_status}")
 
     # Shutdown event
     @app.on_event("shutdown")
@@ -84,6 +94,7 @@ def create_application() -> FastAPI:
         logger.info("Shutting down application...")
         JijiService.close_instance()
         KupatanaService.close_instance()
+        MakaziMapyaService.close_instance()
         logger.info("✓ Shutdown complete")
 
     # Root endpoint
@@ -96,7 +107,8 @@ def create_application() -> FastAPI:
             "health": f"{settings.API_PREFIX}/health",
             "scrapers": {
                 "jiji": "ready" if JijiService.is_ready() else "not initialized",
-                "kupatana": "ready" if KupatanaService.is_ready() else "not initialized"
+                "kupatana": "ready" if KupatanaService.is_ready() else "not initialized",
+                "makazimapya": "ready" if MakaziMapyaService.is_ready() else "not initialized"
             }
         }
 

@@ -61,4 +61,5 @@ class StatisticsResponse(BaseModel):
     total_listings: int
     jiji_listings: int
     kupatana_listings: int
+    makazimapya_listings: int
     last_updated: str

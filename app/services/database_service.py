@@ -419,11 +419,16 @@ class DatabaseService:
             RealEstateListing.source == 'kupatana',
             RealEstateListing.agent_name.isnot(None)
         ).count()
+        makazimapya_count = self.db.query(RealEstateListing).filter(
+            RealEstateListing.source == 'makazimapya',
+            RealEstateListing.agent_name.isnot(None)
+        ).count()
         
         return {
             'total_listings': total,
             'jiji_listings': jiji_count,
             'kupatana_listings': kupatana_count,
+            'makazimapya_listings': makazimapya_count,
             'last_updated': datetime.now().isoformat()
         }
     

@@ -8,6 +8,7 @@ from app.core.database import get_db
 from app.services.database_service import DatabaseService
 from app.services.jiji_service import JijiService
 from app.services.kupatana_service import KupatanaService
+from app.services.makazimapya_service import MakaziMapyaService
 from app.services.base_scraper_service import BaseScraperService
 from app.api.schemas.scraping import (
     ScrapeAllRequest,
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 SCRAPER_SERVICES: List[type[BaseScraperService]] = [
     JijiService,
     KupatanaService,
+    MakaziMapyaService,
 ]
 
 def get_scraper_service(target_site: str) -> Optional[BaseScraperService]:
@@ -441,25 +443,40 @@ async def get_scraping_status():
                 site_name = None
                 status = None
                 
-                # Try to get instance to check site_name
-                if service_class.is_ready():
+                # Always try to get instance first to get site_name
+                # This will create the instance if it doesn't exist
+                try:
                     instance = service_class.get_instance()
                     if instance:
                         site_name = instance.site_name
-                        status = service_class.get_status()
-                else:
-                    # Check if auto cycle is running even if scraper not ready
-                    try:
-                        instance = service_class.get_instance()
-                        if instance:
-                            site_name = instance.site_name
+                        
+                        # Now check if ready and get status
+                        if service_class.is_ready():
+                            status = service_class.get_status()
+                        else:
+                            # Check if auto cycle is running even if scraper not ready
                             if instance.is_auto_cycle_running():
                                 status = {
                                     'is_scraping': False,
                                     'auto_cycle_running': True
                                 }
-                    except:
-                        pass
+                            else:
+                                # Service exists but not ready
+                                status = {
+                                    'is_scraping': False,
+                                    'auto_cycle_running': False,
+                                    'status': 'not_ready'
+                                }
+                except Exception as inst_error:
+                    # If get_instance fails, try to get site_name from _instance attribute
+                    logger.debug(f"Could not get instance for {service_class.__name__}: {inst_error}")
+                    if hasattr(service_class, '_instance') and service_class._instance is not None:
+                        site_name = service_class._instance.site_name
+                        status = {
+                            'is_scraping': False,
+                            'auto_cycle_running': False,
+                            'status': 'not_ready'
+                        }
                 
                 # Add to status dict if we have a site_name
                 if site_name:
