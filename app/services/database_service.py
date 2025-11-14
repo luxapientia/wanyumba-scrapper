@@ -403,34 +403,38 @@ class DatabaseService:
     def get_statistics(self) -> Dict:
         """
         Get database statistics (only counts detailed listings with agent_name)
+        Dynamically counts listings per source
         
         Returns:
-            Dictionary with statistics
+            Dictionary with statistics including per-source counts
         """
+        from sqlalchemy import func
+        
         # Only count listings with agent_name (scraped in detail)
         total = self.db.query(RealEstateListing).filter(
             RealEstateListing.agent_name.isnot(None)
         ).count()
-        jiji_count = self.db.query(RealEstateListing).filter(
-            RealEstateListing.source == 'jiji',
-            RealEstateListing.agent_name.isnot(None)
-        ).count()
-        kupatana_count = self.db.query(RealEstateListing).filter(
-            RealEstateListing.source == 'kupatana',
-            RealEstateListing.agent_name.isnot(None)
-        ).count()
-        makazimapya_count = self.db.query(RealEstateListing).filter(
-            RealEstateListing.source == 'makazimapya',
-            RealEstateListing.agent_name.isnot(None)
-        ).count()
         
-        return {
+        # Dynamically get counts per source
+        source_counts = self.db.query(
+            RealEstateListing.source,
+            func.count(RealEstateListing.raw_url).label('count')
+        ).filter(
+            RealEstateListing.agent_name.isnot(None)
+        ).group_by(RealEstateListing.source).all()
+        
+        # Build result with dynamic source counts
+        result = {
             'total_listings': total,
-            'jiji_listings': jiji_count,
-            'kupatana_listings': kupatana_count,
-            'makazimapya_listings': makazimapya_count,
+            'sources': {},
             'last_updated': datetime.now().isoformat()
         }
+        
+        for source, count in source_counts:
+            if source:  # Skip None sources
+                result['sources'][source] = count
+        
+        return result
     
     def search_listings(self, query: str, limit: int = 50) -> List[Dict]:
         """

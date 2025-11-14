@@ -57,9 +57,8 @@ class ListingsResponse(BaseModel):
 
 
 class StatisticsResponse(BaseModel):
-    """Response schema for statistics"""
+    """Response schema for statistics - dynamic per-source counts"""
     total_listings: int
-    jiji_listings: int
-    kupatana_listings: int
-    makazimapya_listings: int
+    sources: dict[str, int]  # Dynamic dictionary with source names as keys and counts as values
     last_updated: str
+    model_config = {"extra": "allow"}  # Allow extra fields for backward compatibility
