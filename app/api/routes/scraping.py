@@ -1,10 +1,10 @@
 """
 Scraping endpoints
 """
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict
-from app.core.database import get_db, SessionLocal
+from app.core.database import get_db
 from app.services.database_service import DatabaseService
 from app.services.jiji_service import JijiService
 from app.services.kupatana_service import KupatanaService
@@ -18,340 +18,20 @@ from app.api.schemas.scraping import (
     AutoCycleRequest
 )
 import logging
-import threading
-import time
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# Global dictionary to track auto cycle status
-auto_cycle_status = {
-    'jiji': {'running': False, 'thread': None, 'should_stop': False},
-    'kupatana': {'running': False, 'thread': None, 'should_stop': False}
-}
+# Note: Auto cycle status is now managed by each scraper service instance
 
 
-def _scrape_all_listings_task(
-    target_site: str,
-    max_pages: Optional[int]
-):
-    """Background task to scrape all listings"""
-    # Create a new database session for the background task
-    db = SessionLocal()
-    try:
-        # Get the appropriate scraper instance
-        if target_site.lower() == 'jiji':
-            scraper = JijiService.get_instance()
-        elif target_site.lower() == 'kupatana':
-            scraper = KupatanaService.get_instance()
-        else:
-            raise ValueError(f"Unknown target site: {target_site}")
-
-        logger.info(f"Starting to scrape all listings from {target_site}")
-
-        # Get all listings (basic info) and save to database immediately after each page
-        listings = scraper.get_all_listings_basic(
-            max_pages=max_pages, db_session=db, target_site=target_site)
-
-        logger.info(f"Scraped {len(listings)} listings from {target_site}")
-
-    except Exception as e:
-        logger.error(f"Error scraping listings from {target_site}: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise
-    finally:
-        db.close()
-
-
-def _scrape_detailed_listings_task(
-    urls: List[str],
-    target_site: str
-):
-    """Background task to scrape detailed listings"""
-    # Create a new database session for the background task
-    db = SessionLocal()
-    try:
-        # Get the appropriate scraper instance
-        if target_site.lower() == 'jiji':
-            scraper = JijiService.get_instance()
-        elif target_site.lower() == 'kupatana':
-            scraper = KupatanaService.get_instance()
-        else:
-            raise ValueError(f"Unknown target site: {target_site}")
-
-        logger.info(
-            f"Starting to scrape {len(urls)} detailed listings from {target_site}")
-
-        # Preserve auto cycle fields if they exist
-        auto_cycle_running = scraper.scraping_status.get('auto_cycle_running', False)
-        cycle_number = scraper.scraping_status.get('cycle_number')
-        phase = scraper.scraping_status.get('phase')
-        wait_minutes = scraper.scraping_status.get('wait_minutes')
-
-        # Initialize scraping status for details
-        scraper.is_scraping = True
-        scraper.should_stop = False
-        scraper.scraping_status = {
-            'type': 'details',
-            'target_site': target_site,
-            'current_page': 0,
-            'total_pages': None,
-            'pages_scraped': 0,
-            'listings_found': 0,
-            'listings_saved': 0,
-            'current_url': None,
-            'total_urls': len(urls),
-            'urls_scraped': 0,
-            'status': 'scraping',
-            'auto_cycle_running': auto_cycle_running,
-            'cycle_number': cycle_number,
-            'phase': phase if auto_cycle_running else None,
-            'wait_minutes': wait_minutes,
-        }
-        scraper._broadcast_status()
-
-        total_urls = len(urls)
-
-        for index, url in enumerate(urls, 1):
-            # Check if stop flag is set
-            if scraper.should_stop:
-                logger.info("Stop flag detected. Stopping detailed scraping.")
-                # Update status to stopped
-                if scraper.scraping_status.get('type') == 'details':
-                    scraper.scraping_status['status'] = 'stopped'
-                    scraper._broadcast_status()
-                break
-
-            try:
-                data = scraper.extract_detailed_data(
-                    url,
-                    total_urls=total_urls,
-                    current_index=index,
-                    db_session=db,
-                    target_site=target_site
-                )
-
-                # Update progress after extraction
-                scraper.scraping_status['urls_scraped'] = index
-                scraper.scraping_status['current_url'] = None
-                scraper._broadcast_status()
-
-                # Check if extraction was stopped
-                if data and data.get('error') == 'Scraping was stopped':
-                    logger.info("Extraction stopped by user request.")
-                    # Update status to stopped
-                    if scraper.scraping_status.get('type') == 'details':
-                        scraper.scraping_status['status'] = 'stopped'
-                        scraper._broadcast_status()
-                    break
-
-                # Data is already saved in extract_detailed_data if db_session was provided
-                if data and 'error' not in data:
-                    logger.info(
-                        f"Processed listing: {url} ({index}/{total_urls})")
-            except Exception as e:
-                logger.error(f"Error scraping {url}: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
-                # Update progress even on error
-                scraper.scraping_status['urls_scraped'] = index
-                scraper.scraping_status['current_url'] = None
-                scraper._broadcast_status()
-                continue
-
-        # Reset flags after loop completes
-        scraper.is_scraping = False
-        scraper.should_stop = False
-
-        # Update final status if still in details mode
-        if scraper.scraping_status.get('type') == 'details':
-            if scraper.scraping_status.get('status') != 'stopped':
-                scraper.scraping_status['status'] = 'completed'
-            scraper._broadcast_status()
-
-        logger.info(f"Completed scraping detailed listings from {target_site}")
-
-    except Exception as e:
-        logger.error(
-            f"Error scraping detailed listings from {target_site}: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise
-    finally:
-        db.close()
-
-
-def _scrape_all_with_details_task(
-    target_site: str,
-    max_pages: Optional[int]
-):
-    """Background task to scrape all listings with details"""
-    # Create a new database session for the background task
-    db = SessionLocal()
-    try:
-        logger.info(f"Starting full scrape of {target_site}")
-
-        # Step 1: Scrape all listings
-        _scrape_all_listings_task(target_site, max_pages)
-
-        # Step 2: Get URLs from database and scrape details
-        db_service = DatabaseService(db)
-        listings = db_service.get_all_listings(
-            lightweight=True, target_site=target_site)
-        urls = [listing['rawUrl']
-                for listing in listings if 'rawUrl' in listing]
-
-        # Scrape details
-        _scrape_detailed_listings_task(urls, target_site)
-
-        logger.info(f"Completed full scrape of {target_site}")
-
-    except Exception as e:
-        logger.error(f"Error in full scrape of {target_site}: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise
-    finally:
-        db.close()
-
-
-def _auto_cycle_scraping_task(
-    target_site: str,
-    max_pages: Optional[int],
-    cycle_delay_minutes: int
-):
-    """
-    Background task for automatic scraping cycle
-    Continuously scrapes basic listings then details in a loop
-    """
-    cycle_number = 0
-    
-    while not auto_cycle_status[target_site]['should_stop']:
-        cycle_number += 1
-        db = SessionLocal()
-        
-        try:
-            logger.info(f"Starting auto cycle #{cycle_number} for {target_site}")
-            
-            # Get scraper instance
-            if target_site.lower() == 'jiji':
-                scraper = JijiService.get_instance()
-            elif target_site.lower() == 'kupatana':
-                scraper = KupatanaService.get_instance()
-            else:
-                logger.error(f"Unknown target site: {target_site}")
-                break
-            
-            # Update status - Phase 1: Scraping basic listings
-            scraper.scraping_status['auto_cycle_running'] = True
-            scraper.scraping_status['cycle_number'] = cycle_number
-            scraper.scraping_status['phase'] = 'basic_listings'
-            scraper.scraping_status['wait_minutes'] = None
-            scraper.scraping_status['status'] = 'scraping'
-            scraper._broadcast_status()
-            
-            # Phase 1: Scrape basic listings
-            logger.info(f"[Cycle #{cycle_number}] Phase 1: Scraping basic listings from {target_site}")
-            _scrape_all_listings_task(target_site, max_pages)
-            
-            if auto_cycle_status[target_site]['should_stop']:
-                break
-            
-            # Phase 2: Scrape details for listings without agent_name
-            logger.info(f"[Cycle #{cycle_number}] Phase 2: Scraping details for incomplete listings from {target_site}")
-            
-            # Update status - Phase 2: Scraping details
-            scraper.scraping_status['auto_cycle_running'] = True
-            scraper.scraping_status['cycle_number'] = cycle_number
-            scraper.scraping_status['phase'] = 'details'
-            scraper.scraping_status['wait_minutes'] = None
-            scraper.scraping_status['status'] = 'scraping'
-            scraper._broadcast_status()
-            
-            db_service = DatabaseService(db)
-            
-            # Get all listings from the target site
-            all_listings = db_service.get_all_listings(
-                lightweight=True, 
-                target_site=target_site
-            )
-            
-            # Separate listings: those without details first, then those with details
-            listings_without_details = [
-                listing for listing in all_listings 
-                if not listing.get('agentName')
-            ]
-            
-            logger.info(f"[Cycle #{cycle_number}] Found {len(listings_without_details)} listings without details")
-            
-            if listings_without_details:
-                urls = [listing['rawUrl'] for listing in listings_without_details if 'rawUrl' in listing]
-                _scrape_detailed_listings_task(urls, target_site)
-            
-            if auto_cycle_status[target_site]['should_stop']:
-                break
-            
-            # Phase 3: Wait before next cycle
-            logger.info(f"[Cycle #{cycle_number}] Completed. Waiting {cycle_delay_minutes} minutes before next cycle...")
-            
-            # Update status - Waiting
-            scraper.scraping_status['auto_cycle_running'] = True
-            scraper.scraping_status['cycle_number'] = cycle_number
-            scraper.scraping_status['phase'] = 'waiting'
-            scraper.scraping_status['wait_minutes'] = cycle_delay_minutes
-            scraper.scraping_status['status'] = 'idle'
-            scraper.scraping_status['type'] = None
-            scraper.scraping_status['current_page'] = 0
-            scraper.scraping_status['pages_scraped'] = 0
-            scraper.scraping_status['listings_found'] = 0
-            scraper.scraping_status['current_url'] = None
-            scraper.scraping_status['urls_scraped'] = 0
-            scraper._broadcast_status()
-            
-            # Sleep in chunks to allow for responsive stopping
-            wait_seconds = cycle_delay_minutes * 60
-            sleep_interval = 10  # Check every 10 seconds if we should stop
-            elapsed = 0
-            
-            while elapsed < wait_seconds and not auto_cycle_status[target_site]['should_stop']:
-                time.sleep(min(sleep_interval, wait_seconds - elapsed))
-                elapsed += sleep_interval
-            
-        except Exception as e:
-            logger.error(f"Error in auto cycle #{cycle_number} for {target_site}: %s", e, exc_info=True)
-            # Continue to next cycle despite errors
-            time.sleep(60)  # Wait 1 minute before retrying on error
-            
-        finally:
-            db.close()
-    
-    # Cleanup when stopping
-    auto_cycle_status[target_site]['running'] = False
-    auto_cycle_status[target_site]['thread'] = None
-    
-    # Clear auto cycle fields from scraper status
-    if target_site.lower() == 'jiji':
-        scraper = JijiService.get_instance()
-    elif target_site.lower() == 'kupatana':
-        scraper = KupatanaService.get_instance()
-    else:
-        scraper = None
-    
-    if scraper:
-        scraper.scraping_status['auto_cycle_running'] = False
-        scraper.scraping_status['cycle_number'] = None
-        scraper.scraping_status['phase'] = None
-        scraper.scraping_status['wait_minutes'] = None
-        scraper._broadcast_status()
-    
-    logger.info(f"Auto cycle stopped for {target_site} after {cycle_number} cycles")
+# Background task functions have been moved to BaseScraperService
+# Use scraper.scrape_all_listings_async(), scraper.scrape_detailed_listings_async(), etc.
 
 
 @router.post("/scrape-listings", response_model=ScrapeResponse)
 async def scrape_all_listings(
     request: ScrapeAllRequest,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
     """
@@ -362,28 +42,29 @@ async def scrape_all_listings(
     - **save_to_db**: Whether to save results to database (default: true)
     """
     try:
-        # Check if scraper is already scraping
+        # Get scraper instance
         if request.target_site.lower() == 'jiji':
-            if JijiService.is_scraping_now():
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Jiji scraper is already scraping. Please wait for the current operation to complete."
-                )
+            scraper = JijiService.get_instance()
         elif request.target_site.lower() == 'kupatana':
-            if KupatanaService.is_scraping_now():
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Kupatana scraper is already scraping. Please wait for the current operation to complete."
-                )
+            scraper = KupatanaService.get_instance()
         else:
-            raise ValueError(f"Unknown target site: {request.target_site}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown target site: {request.target_site}"
+            )
+
+        # Check if scraper is already scraping
+        if scraper.is_scraping_now():
+            raise HTTPException(
+                status_code=409,
+                detail=f"{request.target_site.capitalize()} scraper is already scraping. Please wait for the current operation to complete."
+            )
 
         if request.save_to_db:
-            # Run scraping in background and save to DB
-            background_tasks.add_task(
-                _scrape_all_listings_task,
-                target_site=request.target_site,
-                max_pages=request.max_pages
+            # Run scraping in background using service method
+            scraper.scrape_all_listings_async(
+                max_pages=request.max_pages,
+                db_session=None  # Service will create its own session in the thread
             )
 
             return {
@@ -393,12 +74,6 @@ async def scrape_all_listings(
             }
         else:
             # Run synchronously and return results
-            if request.target_site.lower() == 'jiji':
-                scraper = JijiService.get_instance()
-            elif request.target_site.lower() == 'kupatana':
-                scraper = KupatanaService.get_instance()
-            else:
-                raise ValueError(f"Unknown target site: {request.target_site}")
             listings = scraper.get_all_listings_basic(
                 max_pages=request.max_pages)
 
@@ -410,6 +85,8 @@ async def scrape_all_listings(
                 "data": listings
             }
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -417,7 +94,6 @@ async def scrape_all_listings(
 @router.post("/scrape-detailed", response_model=ScrapeDetailedResponse)
 async def scrape_detailed_listings(
     request: ScrapeSelectedRequest,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
     """
@@ -428,28 +104,29 @@ async def scrape_detailed_listings(
     - **save_to_db**: Whether to save results to database (default: true)
     """
     try:
-        # Check if scraper is already scraping
+        # Get scraper instance
         if request.target_site.lower() == 'jiji':
-            if JijiService.is_scraping_now():
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Jiji scraper is already scraping. Please wait for the current operation to complete."
-                )
+            scraper = JijiService.get_instance()
         elif request.target_site.lower() == 'kupatana':
-            if KupatanaService.is_scraping_now():
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Kupatana scraper is already scraping. Please wait for the current operation to complete."
-                )
+            scraper = KupatanaService.get_instance()
         else:
-            raise ValueError(f"Unknown target site: {request.target_site}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown target site: {request.target_site}"
+            )
+
+        # Check if scraper is already scraping
+        if scraper.is_scraping_now():
+            raise HTTPException(
+                status_code=409,
+                detail=f"{request.target_site.capitalize()} scraper is already scraping. Please wait for the current operation to complete."
+            )
 
         if request.save_to_db:
-            # Run scraping in background and save to DB
-            background_tasks.add_task(
-                _scrape_detailed_listings_task,
+            # Run scraping in background using service method
+            scraper.scrape_detailed_listings_async(
                 urls=request.urls,
-                target_site=request.target_site
+                db_session=None  # Service will create its own session in the thread
             )
 
             return {
@@ -460,13 +137,6 @@ async def scrape_detailed_listings(
             }
         else:
             # Run synchronously and return results
-            if request.target_site.lower() == 'jiji':
-                scraper = JijiService.get_instance()
-            elif request.target_site.lower() == 'kupatana':
-                scraper = KupatanaService.get_instance()
-            else:
-                raise ValueError(f"Unknown target site: {request.target_site}")
-
             detailed_listings = []
             for url in request.urls:
                 try:
@@ -490,6 +160,8 @@ async def scrape_detailed_listings(
                 "data": detailed_listings
             }
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -497,7 +169,6 @@ async def scrape_detailed_listings(
 @router.post("/scrape-all-detailed", response_model=ScrapeResponse)
 async def scrape_all_detailed(
     request: ScrapeAllRequest,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
     """
@@ -512,27 +183,28 @@ async def scrape_all_detailed(
     - **save_to_db**: Whether to save results to database (default: true)
     """
     try:
-        # Check if scraper is already scraping
+        # Get scraper instance
         if request.target_site.lower() == 'jiji':
-            if JijiService.is_scraping_now():
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Jiji scraper is already scraping. Please wait for the current operation to complete."
-                )
+            scraper = JijiService.get_instance()
         elif request.target_site.lower() == 'kupatana':
-            if KupatanaService.is_scraping_now():
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Kupatana scraper is already scraping. Please wait for the current operation to complete."
-                )
+            scraper = KupatanaService.get_instance()
         else:
-            raise ValueError(f"Unknown target site: {request.target_site}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown target site: {request.target_site}"
+            )
+
+        # Check if scraper is already scraping
+        if scraper.is_scraping_now():
+            raise HTTPException(
+                status_code=409,
+                detail=f"{request.target_site.capitalize()} scraper is already scraping. Please wait for the current operation to complete."
+            )
 
         # This operation can take a long time, so always run in background
-        background_tasks.add_task(
-            _scrape_all_with_details_task,
-            target_site=request.target_site,
-            max_pages=request.max_pages
+        scraper.scrape_all_with_details_async(
+            max_pages=request.max_pages,
+            db_session=None  # Service will create its own session in the thread
         )
 
         return {
@@ -540,80 +212,15 @@ async def scrape_all_detailed(
             "message": f"Scraping all {request.target_site} listings with details in background. This may take a while.",
             "target_site": request.target_site
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-def _scrape_all_details_task(
-    target_site: str
-):
-    """Background task to scrape details for all existing listings in database"""
-    # Create a new database session for the background task
-    db = SessionLocal()
-    try:
-        logger.info(
-            f"Starting to scrape details for all existing {target_site} listings")
-
-        # Get all listing URLs from database
-        db_service = DatabaseService(db)
-        listings = db_service.get_all_listings(
-            lightweight=True, target_site=target_site)
-
-        if not listings:
-            logger.warning(f"No listings found in database for {target_site}")
-            return
-
-        # Filter listings: prioritize those without details (no agent_name)
-        listings_without_details = []
-        listings_with_details = []
-
-        for listing in listings:
-            if 'rawUrl' not in listing:
-                continue
-
-            # Check if listing has details (agent_name is present and not empty)
-            has_details = listing.get(
-                'agentName') is not None and listing.get('agentName') != ''
-
-            if has_details:
-                listings_with_details.append(listing['rawUrl'])
-            else:
-                listings_without_details.append(listing['rawUrl'])
-
-        # Prioritize listings without details first
-        urls = listings_without_details + listings_with_details
-
-        if not urls:
-            logger.warning(
-                f"No valid URLs found in database for {target_site}")
-            return
-
-        logger.info(
-            f"Found {len(urls)} listings in database for {target_site}:")
-        logger.info(
-            f"  - {len(listings_without_details)} without details (will be scraped first)")
-        logger.info(
-            f"  - {len(listings_with_details)} with details (will be scraped after)")
-        logger.info(f"Starting to scrape details...")
-
-        # Scrape details for all URLs (prioritized order)
-        _scrape_detailed_listings_task(urls, target_site)
-
-        logger.info(f"Completed scraping details for {target_site}")
-
-    except Exception as e:
-        logger.error(f"Error scraping details for {target_site}: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise
-    finally:
-        db.close()
 
 
 @router.post("/scrape-all-details", response_model=ScrapeDetailedResponse)
 async def scrape_all_details(
     request: ScrapeAllRequest,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
     """
@@ -623,21 +230,23 @@ async def scrape_all_details(
     - **save_to_db**: Whether to save results to database (default: true)
     """
     try:
-        # Check if scraper is already scraping
+        # Get scraper instance
         if request.target_site.lower() == 'jiji':
-            if JijiService.is_scraping_now():
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Jiji scraper is already scraping. Please wait for the current operation to complete."
-                )
+            scraper = JijiService.get_instance()
         elif request.target_site.lower() == 'kupatana':
-            if KupatanaService.is_scraping_now():
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Kupatana scraper is already scraping. Please wait for the current operation to complete."
-                )
+            scraper = KupatanaService.get_instance()
         else:
-            raise ValueError(f"Unknown target site: {request.target_site}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown target site: {request.target_site}"
+            )
+
+        # Check if scraper is already scraping
+        if scraper.is_scraping_now():
+            raise HTTPException(
+                status_code=409,
+                detail=f"{request.target_site.capitalize()} scraper is already scraping. Please wait for the current operation to complete."
+            )
 
         if request.save_to_db:
             # Get count of listings first
@@ -652,10 +261,9 @@ async def scrape_all_details(
                     detail=f"No listings found in database for {request.target_site}. Please scrape listings first."
                 )
 
-            # Run scraping in background
-            background_tasks.add_task(
-                _scrape_all_details_task,
-                target_site=request.target_site
+            # Run scraping in background using service method
+            scraper.scrape_all_details_async(
+                db_session=None  # Service will create its own session in the thread
             )
 
             return {
@@ -708,23 +316,17 @@ async def stop_scraping(
                 stopped_items.append(f"{target_site} scraper")
         
         # Stop auto cycle if running
-        if auto_cycle_status[target_site]['running']:
-            auto_cycle_status[target_site]['should_stop'] = True
+        if target_site == 'jiji':
+            scraper = JijiService.get_instance()
+        elif target_site == 'kupatana':
+            scraper = KupatanaService.get_instance()
+        else:
+            scraper = None
+        
+        if scraper and scraper.is_auto_cycle_running():
+            scraper.stop_auto_cycle()
             stopped_items.append(f"{target_site} auto cycle")
             logger.info(f"Stopping auto cycle for {target_site}")
-            
-            # Immediately clear auto cycle fields from scraper status
-            if target_site == 'jiji':
-                scraper = JijiService.get_instance()
-            else:
-                scraper = KupatanaService.get_instance()
-            
-            if scraper:
-                scraper.scraping_status['auto_cycle_running'] = False
-                scraper.scraping_status['cycle_number'] = None
-                scraper.scraping_status['phase'] = None
-                scraper.scraping_status['wait_minutes'] = None
-                scraper._broadcast_status()
         
         if not stopped_items:
             raise HTTPException(
@@ -772,25 +374,37 @@ async def start_auto_cycle(
                 detail=f"Unknown target site: {target_site}. Must be 'jiji' or 'kupatana'."
             )
         
+        # Get scraper instance
+        if target_site == 'jiji':
+            scraper = JijiService.get_instance()
+        elif target_site == 'kupatana':
+            scraper = KupatanaService.get_instance()
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown target site: {target_site}. Must be 'jiji' or 'kupatana'."
+            )
+        
         # Check if already running
-        if auto_cycle_status[target_site]['running']:
+        if scraper.is_auto_cycle_running():
             raise HTTPException(
                 status_code=400,
                 detail=f"Auto cycle already running for {target_site}"
             )
         
-        # Reset stop flag
-        auto_cycle_status[target_site]['should_stop'] = False
-        auto_cycle_status[target_site]['running'] = True
-        
-        # Start the cycle in a separate thread
-        thread = threading.Thread(
-            target=_auto_cycle_scraping_task,
-            args=(target_site, request.max_pages, request.cycle_delay_minutes),
-            daemon=True
+        # Start auto cycle using the service method
+        # Note: db_session is None - the auto cycle will create its own session in the thread
+        success = scraper.start_auto_cycle(
+            max_pages=request.max_pages,
+            cycle_delay_minutes=request.cycle_delay_minutes,
+            db_session=None  # Auto cycle creates its own session in the thread
         )
-        thread.start()
-        auto_cycle_status[target_site]['thread'] = thread
+        
+        if not success:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to start auto cycle for {target_site}"
+            )
         
         logger.info(f"Started auto cycle for {target_site}")
         
@@ -824,29 +438,37 @@ async def get_scraping_status():
         if JijiService.is_ready():
             jiji_status = JijiService.get_status()
             if jiji_status:
-                # Add auto cycle status
-                jiji_status['auto_cycle_running'] = auto_cycle_status['jiji']['running']
+                # Auto cycle status is already included in scraping_status
+                pass
         else:
-            # Even if scraper not ready, check if auto cycle is running
-            if auto_cycle_status['jiji']['running']:
-                jiji_status = {
-                    'is_scraping': False,
-                    'auto_cycle_running': True
-                }
+            # Check if auto cycle is running even if scraper not ready
+            try:
+                jiji_instance = JijiService.get_instance()
+                if jiji_instance and jiji_instance.is_auto_cycle_running():
+                    jiji_status = {
+                        'is_scraping': False,
+                        'auto_cycle_running': True
+                    }
+            except:
+                pass
 
         # Get Kupatana status if instance exists
         if KupatanaService.is_ready():
             kupatana_status = KupatanaService.get_status()
             if kupatana_status:
-                # Add auto cycle status
-                kupatana_status['auto_cycle_running'] = auto_cycle_status['kupatana']['running']
+                # Auto cycle status is already included in scraping_status
+                pass
         else:
-            # Even if scraper not ready, check if auto cycle is running
-            if auto_cycle_status['kupatana']['running']:
-                kupatana_status = {
-                    'is_scraping': False,
-                    'auto_cycle_running': True
-                }
+            # Check if auto cycle is running even if scraper not ready
+            try:
+                kupatana_instance = KupatanaService.get_instance()
+                if kupatana_instance and kupatana_instance.is_auto_cycle_running():
+                    kupatana_status = {
+                        'is_scraping': False,
+                        'auto_cycle_running': True
+                    }
+            except:
+                pass
 
         return {
             "jiji": jiji_status,

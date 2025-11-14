@@ -3,7 +3,6 @@ Jiji.co.tz Real Estate Scraper Service
 Service for scraping real estate listings from jiji.co.tz
 """
 
-import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -13,8 +12,9 @@ import re
 from datetime import datetime
 from typing import List, Dict, Optional
 import logging
-import os
 from urllib.parse import urlparse, urlunparse
+
+from app.services.base_scraper_service import BaseScraperService
 
 # Setup logging
 logging.basicConfig(
@@ -23,7 +23,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class JijiService:
+class JijiService(BaseScraperService):
     """Jiji scraper service with login functionality for detailed real estate data"""
 
     _instance: Optional["JijiService"] = None
@@ -31,38 +31,26 @@ class JijiService:
     def __init__(
         self, email: str, password: str, headless: bool = False, profile_dir: str = None
     ):
-        self.base_url = "https://jiji.co.tz"
+        # Initialize base class
+        super().__init__(
+            base_url="https://jiji.co.tz",
+            headless=headless,
+            profile_dir=profile_dir or "./browser_profile",
+            site_name="jiji"
+        )
+        
+        # Jiji-specific URLs
         self.real_estate_url = f"{self.base_url}/real-estate"
         self.login_url = f"{self.base_url}/login"
+        
+        # Jiji-specific credentials
         self.email = email
         self.password = password
-        self.headless = headless
-        self.profile_dir = (
-            profile_dir or "./browser_profile"
-        )  # Default profile directory
-        self.driver = None
+        
+        # Jiji-specific state
         self.listings = []
         self.detailed_listings = []
         self.is_logged_in = False
-        self.is_scraping = False  # Track if currently scraping
-        self.should_stop = False  # Flag to stop scraping gracefully
-        self.scraping_status = {
-            "type": None,  # 'listings' or 'details' or 'auto_cycle' or None
-            "target_site": None,
-            "current_page": 0,
-            "total_pages": None,
-            "pages_scraped": 0,
-            "listings_found": 0,
-            "listings_saved": 0,
-            "current_url": None,
-            "total_urls": 0,
-            "urls_scraped": 0,
-            "status": "idle",  # 'idle', 'scraping', 'completed', 'error', 'stopped'
-            "auto_cycle_running": False,
-            "cycle_number": None,
-            "phase": None,  # 'basic_listings', 'details', 'waiting'
-            "wait_minutes": None,
-        }
 
     @classmethod
     def get_instance(cls) -> "JijiService":
@@ -131,85 +119,6 @@ class JijiService:
         if cls._instance:
             cls._instance.should_stop = True
             logger.info("Stop flag set for Jiji scraper")
-
-    def _check_should_stop(self) -> bool:
-        """Check if scraping should be stopped"""
-        return self.should_stop
-
-    def _broadcast_status(self):
-        """Broadcast scraping status via WebSocket"""
-        try:
-            from app.core.websocket_manager import manager
-
-            manager.broadcast_sync(
-                {
-                    "type": "scraping_status",
-                    "target_site": self.scraping_status.get("target_site"),
-                    "data": self.scraping_status.copy(),
-                }
-            )
-        except Exception:
-            logger.debug("Error broadcasting status", exc_info=True)
-
-    def start_browser(self):
-        """Initialize the browser with persistent profile"""
-        # Don't start if browser already exists
-        if self.driver is not None:
-            logger.info("Browser already started, skipping...")
-            return
-
-        logger.info("Starting undetected Chrome browser...")
-        options = uc.ChromeOptions()
-
-        # Disable headless mode for undetected-chromedriver (causes connection issues)
-        # Use --window-position to hide window instead if needed
-        if self.headless:
-            logger.warning(
-                "Headless mode disabled for undetected-chromedriver compatibility"
-            )
-            # options.add_argument('--headless=new')  # Disabled - causes issues
-            # Move window off-screen
-            options.add_argument("--window-position=0,0")
-
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--disable-software-rasterizer")
-
-        # Use persistent profile directory to save login session
-        if self.profile_dir:
-            profile_path = os.path.abspath(self.profile_dir)
-
-            # Create profile directory if it doesn't exist
-            os.makedirs(profile_path, exist_ok=True)
-
-            options.add_argument(f"--user-data-dir={profile_path}")
-            logger.info("Using browser profile: %s", profile_path)
-
-        try:
-            self.driver = uc.Chrome(options=options, version_main=None)
-
-            if not self.headless:
-                self.driver.maximize_window()
-
-            # Set reasonable timeouts
-            self.driver.set_page_load_timeout(45)
-            self.driver.set_script_timeout(30)
-
-            logger.info("Browser started successfully")
-        except Exception:
-            logger.error("Failed to start browser", exc_info=True)
-            raise
-
-    def close_browser(self):
-        """Close the browser"""
-        if self.driver:
-            try:
-                self.driver.quit()
-                logger.info("Browser closed")
-            except Exception:
-                logger.error("Error closing browser", exc_info=True)
 
     def has_cloudflare_challenge(self) -> bool:
         """Check if the current page has a Cloudflare challenge"""
@@ -417,35 +326,8 @@ class JijiService:
         Returns:
             List of dictionaries with 'url', 'title', 'price', 'currency' keys
         """
-        # Set scraping status and reset stop flag
-        self.is_scraping = True
-        self.should_stop = False
-
-        # Preserve auto cycle fields if they exist
-        auto_cycle_running = self.scraping_status.get("auto_cycle_running", False)
-        cycle_number = self.scraping_status.get("cycle_number")
-        phase = self.scraping_status.get("phase")
-        wait_minutes = self.scraping_status.get("wait_minutes")
-
         # Initialize scraping status
-        self.scraping_status = {
-            "type": "listings",
-            "target_site": target_site,
-            "current_page": 0,
-            "total_pages": max_pages,
-            "pages_scraped": 0,
-            "listings_found": 0,
-            "listings_saved": 0,
-            "current_url": None,
-            "total_urls": 0,
-            "urls_scraped": 0,
-            "status": "scraping",
-            "auto_cycle_running": auto_cycle_running,
-            "cycle_number": cycle_number,
-            "phase": phase if auto_cycle_running else None,
-            "wait_minutes": wait_minutes,
-        }
-        self._broadcast_status()
+        self._init_listings_status(target_site, max_pages)
 
         logger.info(
             "Starting to scrape all listings (url, title, price) from all pages..."
@@ -456,11 +338,8 @@ class JijiService:
         total_saved = 0  # Track total saved to database
 
         # Initialize database service if session is provided
-        db_service = None
-        if db_session:
-            from app.services.database_service import DatabaseService
-
-            db_service = DatabaseService(db_session)
+        db_service = self._get_db_service(db_session)
+        if db_service:
             logger.info("✅ Database service initialized for %s", target_site)
         else:
             logger.warning(
@@ -689,38 +568,22 @@ class JijiService:
                         )
 
                         # Update scraping status
-                        self.scraping_status["current_page"] = page_num
-                        self.scraping_status["pages_scraped"] = page_num
-                        self.scraping_status["listings_found"] = len(all_listings)
+                        self._update_page_progress(page_num, len(all_listings))
 
                         # Save to database immediately if db_session is provided
-                        logger.debug(
-                            "Checking db_service: %s, db_session provided: %s",
-                            db_service is not None,
-                            db_session is not None,
-                        )
                         if db_service:
                             logger.info(
                                 "💾 Starting to save %s listings from page %s to database...",
                                 len(page_listings),
                                 page_num,
                             )
-                            page_saved = 0
-                            for listing_data in page_listings:
-                                try:
-                                    db_service.create_or_update_listing(
-                                        listing_data, target_site
-                                    )
-                                    page_saved += 1
-                                except Exception:
-                                    logger.error(
-                                        "Error saving listing %s",
-                                        listing_data.get("url"),
-                                        exc_info=True,
-                                    )
-                                    continue
+                            page_saved = self._save_listings_batch(
+                                page_listings, 
+                                target_site, 
+                                db_session,
+                                update_status=True
+                            )
                             total_saved += page_saved
-                            self.scraping_status["listings_saved"] = total_saved
                             logger.info(
                                 "💾 Page %s: Saved %s listings to database (Total saved: %s)",
                                 page_num,
@@ -765,26 +628,9 @@ class JijiService:
                 logger.info("💾 Total saved to database: %s listings", total_saved)
             return all_listings
         finally:
-            # Check stop flag before resetting it
+            # Finalize scraping status
             was_stopped = self.should_stop
-            
-            # Always reset scraping status and stop flag
-            self.is_scraping = False
-            self.should_stop = False
-
-            # Update final status (preserve auto cycle fields)
-            if was_stopped:
-                self.scraping_status["status"] = "stopped"
-            else:
-                self.scraping_status["status"] = "completed"
-            self.scraping_status["current_page"] = 0
-            
-            # If not part of auto cycle, clear phase
-            if not self.scraping_status.get("auto_cycle_running"):
-                self.scraping_status["phase"] = None
-            
-            self._broadcast_status()
-
+            self._finalize_status(was_stopped=was_stopped)
             logger.info("Scraping completed, status reset")
 
     def extract_detailed_data(
@@ -813,13 +659,11 @@ class JijiService:
 
         # Update scraping status for details (status should already be initialized by the calling function)
         # Just update the current URL and progress
-        self.scraping_status["current_url"] = listing_url
-        # -1 because we're about to process this URL
-        self.scraping_status["urls_scraped"] = current_index - 1
-        if total_urls > 0:
-            self.scraping_status["total_urls"] = total_urls
-
-        self._broadcast_status()
+        self._update_url_progress(
+            current_url=listing_url,
+            current_index=current_index - 1,  # -1 because we're about to process this URL
+            total_urls=total_urls if total_urls > 0 else None
+        )
 
         try:
             # Check if stop flag is set before starting
@@ -1409,17 +1253,8 @@ class JijiService:
             )
 
             # Save to database if db_session is provided
-            if db_session and "error" not in result:
-                try:
-                    from app.services.database_service import DatabaseService
-
-                    db_service = DatabaseService(db_session)
-                    db_service.create_or_update_listing(result, target_site)
-                    logger.info("💾 Saved listing to database: %s", listing_url)
-                except Exception:
-                    logger.error(
-                        "Error saving listing to database", exc_info=True
-                    )
+            if self._save_listing(result, target_site, db_session):
+                logger.info("💾 Saved listing to database: %s", listing_url)
 
             return result
 
@@ -1437,14 +1272,14 @@ class JijiService:
             if self.scraping_status.get("type") == "details":
                 # Only update if not stopped (if stopped, status will be updated by the loop)
                 if not self.should_stop:
-                    self.scraping_status["urls_scraped"] = current_index + 1
-                self.scraping_status["current_url"] = None
-
-                # If stopped, update status
-                if self.should_stop:
-                    self.scraping_status["status"] = "stopped"
-
-                self._broadcast_status()
+                    self._update_url_progress(
+                        current_url=None,
+                        current_index=current_index + 1,
+                        broadcast=True
+                    )
+                else:
+                    # If stopped, update status
+                    self._update_status_field("status", "stopped", broadcast=True)
 
             # Note: Don't reset is_scraping and should_stop here
             # They will be reset by the calling function (_scrape_detailed_listings_task)

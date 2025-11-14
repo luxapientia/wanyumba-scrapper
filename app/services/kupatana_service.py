@@ -10,12 +10,12 @@ import random
 from datetime import datetime
 from typing import List, Dict, Optional
 from urllib.parse import urljoin
-import os
 
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.common.exceptions import TimeoutException
 from bs4 import BeautifulSoup
-import undetected_chromedriver as uc
+
+from app.services.base_scraper_service import BaseScraperService
 
 # Configure logging
 logging.basicConfig(
@@ -25,7 +25,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class KupatanaService:
+class KupatanaService(BaseScraperService):
     """Kupatana scraper service for real estate listings"""
 
     _instance: Optional['KupatanaService'] = None
@@ -38,30 +38,13 @@ class KupatanaService:
             headless: Run browser in headless mode
             profile_dir: Directory to save browser profile (for persistent sessions)
         """
-        self.base_url = "https://kupatana.com"
-        self.headless = headless
-        # Default profile directory
-        self.profile_dir = profile_dir or "./kupatana_browser_profile"
-        self.driver = None
-        self.is_scraping = False  # Track if currently scraping
-        self.should_stop = False  # Flag to stop scraping gracefully
-        self.scraping_status = {
-            'type': None,  # 'listings' or 'details' or 'auto_cycle' or None
-            'target_site': None,
-            'current_page': 0,
-            'total_pages': None,
-            'pages_scraped': 0,
-            'listings_found': 0,
-            'listings_saved': 0,
-            'current_url': None,
-            'total_urls': 0,
-            'urls_scraped': 0,
-            'status': 'idle',  # 'idle', 'scraping', 'completed', 'error', 'stopped'
-            'auto_cycle_running': False,
-            'cycle_number': None,
-            'phase': None,  # 'basic_listings', 'details', 'waiting'
-            'wait_minutes': None,
-        }
+        # Initialize base class
+        super().__init__(
+            base_url="https://kupatana.com",
+            headless=headless,
+            profile_dir=profile_dir or "./kupatana_browser_profile",
+            site_name="kupatana"
+        )
 
     @classmethod
     def get_instance(cls) -> 'KupatanaService':
@@ -133,81 +116,6 @@ class KupatanaService:
             cls._instance.should_stop = True
             logger.info("Stop flag set for Kupatana scraper")
 
-    def _check_should_stop(self) -> bool:
-        """Check if scraping should be stopped"""
-        return self.should_stop
-
-    def _broadcast_status(self):
-        """Broadcast scraping status via WebSocket"""
-        try:
-            from app.core.websocket_manager import manager
-            manager.broadcast_sync({
-                'type': 'scraping_status',
-                'target_site': self.scraping_status.get('target_site'),
-                'data': self.scraping_status.copy()
-            })
-        except Exception as e:
-            logger.debug(f"Error broadcasting status: {e}")
-
-    def start_browser(self):
-        """Start the undetected Chrome browser with persistent profile"""
-        # Don't start if browser already exists
-        if self.driver is not None:
-            logger.info("Browser already started, skipping...")
-            return
-
-        logger.info("Starting undetected Chrome browser...")
-        options = uc.ChromeOptions()
-
-        # Disable headless mode for undetected-chromedriver (causes connection issues)
-        # Use --window-position to hide window instead if needed
-        if self.headless:
-            logger.warning(
-                "Headless mode disabled for undetected-chromedriver compatibility")
-            # options.add_argument('--headless=new')  # Disabled - causes issues
-            # Move window off-screen
-            options.add_argument('--window-position=0,0')
-
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--disable-blink-features=AutomationControlled')
-        options.add_argument('--disable-gpu')
-        options.add_argument('--disable-software-rasterizer')
-
-        # Use persistent profile directory to save session
-        if self.profile_dir:
-            profile_path = os.path.abspath(self.profile_dir)
-
-            # Create profile directory if it doesn't exist
-            os.makedirs(profile_path, exist_ok=True)
-
-            options.add_argument(f'--user-data-dir={profile_path}')
-            logger.info(f"Using browser profile: {profile_path}")
-
-        try:
-            self.driver = uc.Chrome(options=options, version_main=None)
-
-            if not self.headless:
-                self.driver.maximize_window()
-
-            # Set reasonable timeouts
-            self.driver.set_page_load_timeout(45)
-            self.driver.set_script_timeout(30)
-
-            logger.info("Browser started successfully")
-        except Exception as e:
-            logger.error(f"Failed to start browser: {e}")
-            raise
-
-    def close_browser(self):
-        """Close the browser"""
-        if self.driver:
-            try:
-                self.driver.quit()
-                logger.info("Browser closed")
-            except Exception as e:
-                logger.error(f"Error closing browser: {e}")
-
     def wait_for_page_load(self, timeout: int = 15):
         """Wait for page to load"""
         try:
@@ -257,35 +165,8 @@ class KupatanaService:
         Returns:
             List of dictionaries with 'url', 'title', 'price', 'currency' keys
         """
-        # Set scraping status and reset stop flag
-        self.is_scraping = True
-        self.should_stop = False
-
-        # Preserve auto cycle fields if they exist
-        auto_cycle_running = self.scraping_status.get('auto_cycle_running', False)
-        cycle_number = self.scraping_status.get('cycle_number')
-        phase = self.scraping_status.get('phase')
-        wait_minutes = self.scraping_status.get('wait_minutes')
-
         # Initialize scraping status
-        self.scraping_status = {
-            'type': 'listings',
-            'target_site': target_site,
-            'current_page': 0,
-            'total_pages': max_pages,
-            'pages_scraped': 0,
-            'listings_found': 0,
-            'listings_saved': 0,
-            'current_url': None,
-            'total_urls': 0,
-            'urls_scraped': 0,
-            'status': 'scraping',
-            'auto_cycle_running': auto_cycle_running,
-            'cycle_number': cycle_number,
-            'phase': phase if auto_cycle_running else None,
-            'wait_minutes': wait_minutes,
-        }
-        self._broadcast_status()
+        self._init_listings_status(target_site, max_pages)
 
         logger.info(
             "Starting to scrape all listings (url, title, price) from all pages...")
@@ -297,10 +178,9 @@ class KupatanaService:
         total_saved = 0  # Track total saved to database
 
         # Initialize database service if session is provided
-        db_service = None
-        if db_session:
-            from app.services.database_service import DatabaseService
-            db_service = DatabaseService(db_session)
+        db_service = self._get_db_service(db_session)
+        if db_service:
+            logger.info("✅ Database service initialized for %s", target_site)
 
         try:
             while True:
@@ -486,22 +366,22 @@ class KupatanaService:
                         logger.info(f"✅ Page {page_num}: Found {new_listings_count} new listings, {len(page_listings)} total (Total: {len(all_listings)})")
                         
                         # Update scraping status
-                        self.scraping_status['current_page'] = page_num
-                        self.scraping_status['pages_scraped'] = page_num
-                        self.scraping_status['listings_found'] = len(all_listings)
+                        self._update_page_progress(page_num, len(all_listings))
                         
                         # Save to database immediately if db_session is provided
                         if db_service:
-                            page_saved = 0
-                            for listing_data in page_listings:
-                                try:
-                                    db_service.create_or_update_listing(listing_data, target_site)
-                                    page_saved += 1
-                                except Exception as e:
-                                    logger.error(f"Error saving listing {listing_data.get('url')}: {e}")
-                                    continue
+                            logger.info(
+                                "💾 Starting to save %s listings from page %s to database...",
+                                len(page_listings),
+                                page_num,
+                            )
+                            page_saved = self._save_listings_batch(
+                                page_listings, 
+                                target_site, 
+                                db_session,
+                                update_status=True
+                            )
                             total_saved += page_saved
-                            self.scraping_status['listings_saved'] = total_saved
                             logger.info(f"💾 Page {page_num}: Saved {page_saved} listings to database (Total saved: {total_saved})")
                         
                         # Broadcast status update
@@ -527,26 +407,9 @@ class KupatanaService:
                 logger.info(f"💾 Total saved to database: {total_saved} listings")
             return all_listings
         finally:
-            # Check stop flag before resetting it
+            # Finalize scraping status
             was_stopped = self.should_stop
-            
-            # Always reset scraping status and stop flag
-            self.is_scraping = False
-            self.should_stop = False
-            
-            # Update final status (preserve auto cycle fields)
-            if was_stopped:
-                self.scraping_status['status'] = 'stopped'
-            else:
-                self.scraping_status['status'] = 'completed'
-            self.scraping_status['current_page'] = 0
-            
-            # If not part of auto cycle, clear phase
-            if not self.scraping_status.get('auto_cycle_running'):
-                self.scraping_status['phase'] = None
-            
-            self._broadcast_status()
-                
+            self._finalize_status(was_stopped=was_stopped)
             logger.info("Scraping completed, status reset")
     
     def extract_phone_from_tel_link(self, soup: BeautifulSoup) -> List[str]:
@@ -588,12 +451,11 @@ class KupatanaService:
         
         # Update scraping status for details (status should already be initialized by the calling function)
         # Just update the current URL and progress
-        self.scraping_status['current_url'] = url
-        self.scraping_status['urls_scraped'] = current_index - 1  # -1 because we're about to process this URL
-        if total_urls > 0:
-            self.scraping_status['total_urls'] = total_urls
-        
-        self._broadcast_status()
+        self._update_url_progress(
+            current_url=url,
+            current_index=current_index - 1,  # -1 because we're about to process this URL
+            total_urls=total_urls if total_urls > 0 else None
+        )
         logger.info(f"🔍 Extracting data from: {url}")
         
         try:
@@ -1016,16 +878,8 @@ class KupatanaService:
             logger.info(f"✅ Extracted: {result['title'][:50] if result.get('title') else 'Unknown'}...")
             
             # Save to database if db_session is provided
-            if db_session and 'error' not in result:
-                try:
-                    from app.services.database_service import DatabaseService
-                    db_service = DatabaseService(db_session)
-                    db_service.create_or_update_listing(result, target_site)
-                    logger.info(f"💾 Saved listing to database: {url}")
-                except Exception as e:
-                    logger.error(f"Error saving listing to database: {e}")
-                    import traceback
-                    logger.debug(traceback.format_exc())
+            if self._save_listing(result, target_site, db_session):
+                logger.info(f"💾 Saved listing to database: {url}")
             
             return result
             
