@@ -8,6 +8,7 @@ from app.core.database import get_db
 from app.services.database_service import DatabaseService
 from app.services.jiji_service import JijiService
 from app.services.kupatana_service import KupatanaService
+from app.services.base_scraper_service import BaseScraperService
 from app.api.schemas.scraping import (
     ScrapeAllRequest,
     ScrapeSelectedRequest,
@@ -21,6 +22,38 @@ import logging
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# Registry of available scraper services
+# Each service's site_name will be used to match against target_site
+SCRAPER_SERVICES: List[type[BaseScraperService]] = [
+    JijiService,
+    KupatanaService,
+]
+
+def get_scraper_service(target_site: str) -> Optional[BaseScraperService]:
+    """
+    Get scraper service instance by target_site name.
+    Uses the service's site_name attribute to match.
+    
+    Args:
+        target_site: The site name to match (e.g., 'jiji', 'kupatana')
+        
+    Returns:
+        Scraper service instance or None if not found
+    """
+    target_site_lower = target_site.lower()
+    
+    for service_class in SCRAPER_SERVICES:
+        # Get instance to check site_name
+        try:
+            instance = service_class.get_instance()
+            if instance and instance.site_name.lower() == target_site_lower:
+                return instance
+        except Exception as e:
+            logger.debug(f"Could not get instance for {service_class.__name__}: {e}")
+            continue
+    
+    return None
 
 # Note: Auto cycle status is now managed by each scraper service instance
 
@@ -37,17 +70,14 @@ async def scrape_all_listings(
     """
     Scrape all listings from a site (basic info: url, title, price)
 
-    - **target_site**: jiji or kupatana
+    - **target_site**: Site name (e.g., 'jiji', 'kupatana')
     - **max_pages**: Maximum number of pages to scrape (optional)
     - **save_to_db**: Whether to save results to database (default: true)
     """
     try:
-        # Get scraper instance
-        if request.target_site.lower() == 'jiji':
-            scraper = JijiService.get_instance()
-        elif request.target_site.lower() == 'kupatana':
-            scraper = KupatanaService.get_instance()
-        else:
+        # Get scraper instance dynamically
+        scraper = get_scraper_service(request.target_site)
+        if not scraper:
             raise HTTPException(
                 status_code=400,
                 detail=f"Unknown target site: {request.target_site}"
@@ -100,16 +130,13 @@ async def scrape_detailed_listings(
     Scrape detailed data for selected URLs
 
     - **urls**: List of listing URLs to scrape
-    - **target_site**: jiji or kupatana
+    - **target_site**: Site name (e.g., 'jiji', 'kupatana')
     - **save_to_db**: Whether to save results to database (default: true)
     """
     try:
-        # Get scraper instance
-        if request.target_site.lower() == 'jiji':
-            scraper = JijiService.get_instance()
-        elif request.target_site.lower() == 'kupatana':
-            scraper = KupatanaService.get_instance()
-        else:
+        # Get scraper instance dynamically
+        scraper = get_scraper_service(request.target_site)
+        if not scraper:
             raise HTTPException(
                 status_code=400,
                 detail=f"Unknown target site: {request.target_site}"
@@ -178,17 +205,14 @@ async def scrape_all_detailed(
     1. Scrape all listing URLs (basic info)
     2. Scrape detailed data for each URL
 
-    - **target_site**: jiji or kupatana
+    - **target_site**: Site name (e.g., 'jiji', 'kupatana')
     - **max_pages**: Maximum number of pages to scrape (optional)
     - **save_to_db**: Whether to save results to database (default: true)
     """
     try:
-        # Get scraper instance
-        if request.target_site.lower() == 'jiji':
-            scraper = JijiService.get_instance()
-        elif request.target_site.lower() == 'kupatana':
-            scraper = KupatanaService.get_instance()
-        else:
+        # Get scraper instance dynamically
+        scraper = get_scraper_service(request.target_site)
+        if not scraper:
             raise HTTPException(
                 status_code=400,
                 detail=f"Unknown target site: {request.target_site}"
@@ -226,16 +250,13 @@ async def scrape_all_details(
     """
     Scrape detailed data for all existing listings in the database
 
-    - **target_site**: jiji or kupatana
+    - **target_site**: Site name (e.g., 'jiji', 'kupatana')
     - **save_to_db**: Whether to save results to database (default: true)
     """
     try:
-        # Get scraper instance
-        if request.target_site.lower() == 'jiji':
-            scraper = JijiService.get_instance()
-        elif request.target_site.lower() == 'kupatana':
-            scraper = KupatanaService.get_instance()
-        else:
+        # Get scraper instance dynamically
+        scraper = get_scraper_service(request.target_site)
+        if not scraper:
             raise HTTPException(
                 status_code=400,
                 detail=f"Unknown target site: {request.target_site}"
@@ -292,38 +313,28 @@ async def stop_scraping(
     Stop the current scraping operation for a specific site
     This will also stop the auto cycle if it's running
 
-    - **target_site**: jiji or kupatana
+    - **target_site**: Site name (e.g., 'jiji', 'kupatana')
     """
     try:
         target_site = request.target_site.lower()
         
-        if target_site not in ['jiji', 'kupatana']:
+        # Get scraper instance dynamically
+        scraper = get_scraper_service(target_site)
+        if not scraper:
             raise HTTPException(
                 status_code=400,
-                detail=f"Unknown target site: {target_site}. Must be 'jiji' or 'kupatana'."
+                detail=f"Unknown target site: {target_site}"
             )
         
         stopped_items = []
         
         # Stop regular scraping
-        if target_site == 'jiji':
-            if JijiService.is_scraping_now():
-                JijiService.stop_scraping()
-                stopped_items.append(f"{target_site} scraper")
-        elif target_site == 'kupatana':
-            if KupatanaService.is_scraping_now():
-                KupatanaService.stop_scraping()
-                stopped_items.append(f"{target_site} scraper")
+        if scraper.is_scraping_now():
+            scraper.stop_scraping()
+            stopped_items.append(f"{target_site} scraper")
         
         # Stop auto cycle if running
-        if target_site == 'jiji':
-            scraper = JijiService.get_instance()
-        elif target_site == 'kupatana':
-            scraper = KupatanaService.get_instance()
-        else:
-            scraper = None
-        
-        if scraper and scraper.is_auto_cycle_running():
+        if scraper.is_auto_cycle_running():
             scraper.stop_auto_cycle()
             stopped_items.append(f"{target_site} auto cycle")
             logger.info(f"Stopping auto cycle for {target_site}")
@@ -360,7 +371,7 @@ async def start_auto_cycle(
     3. Wait for specified delay
     4. Repeat
     
-    - **target_site**: jiji or kupatana
+    - **target_site**: Site name (e.g., 'jiji', 'kupatana')
     - **max_pages**: Maximum pages to scrape per cycle (optional)
     - **cycle_delay_minutes**: Minutes to wait between cycles (default: 30)
     - **headless**: Run browser in headless mode (default: true)
@@ -368,21 +379,12 @@ async def start_auto_cycle(
     try:
         target_site = request.target_site.lower()
         
-        if target_site not in ['jiji', 'kupatana']:
+        # Get scraper instance dynamically
+        scraper = get_scraper_service(target_site)
+        if not scraper:
             raise HTTPException(
                 status_code=400,
-                detail=f"Unknown target site: {target_site}. Must be 'jiji' or 'kupatana'."
-            )
-        
-        # Get scraper instance
-        if target_site == 'jiji':
-            scraper = JijiService.get_instance()
-        elif target_site == 'kupatana':
-            scraper = KupatanaService.get_instance()
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unknown target site: {target_site}. Must be 'jiji' or 'kupatana'."
+                detail=f"Unknown target site: {target_site}"
             )
         
         # Check if already running
@@ -426,54 +428,48 @@ async def get_scraping_status():
     """
     Get the current scraping status for all scrapers
 
-    Returns the current status of both Jiji and Kupatana scrapers,
+    Returns the current status of all registered scrapers,
     including whether they are currently scraping, their progress,
     and auto cycle status.
     """
     try:
-        jiji_status = None
-        kupatana_status = None
-
-        # Get Jiji status if instance exists
-        if JijiService.is_ready():
-            jiji_status = JijiService.get_status()
-            if jiji_status:
-                # Auto cycle status is already included in scraping_status
-                pass
-        else:
-            # Check if auto cycle is running even if scraper not ready
+        status_dict = {}
+        
+        # Get status for all registered scrapers
+        for service_class in SCRAPER_SERVICES:
             try:
-                jiji_instance = JijiService.get_instance()
-                if jiji_instance and jiji_instance.is_auto_cycle_running():
-                    jiji_status = {
-                        'is_scraping': False,
-                        'auto_cycle_running': True
-                    }
-            except:
-                pass
+                site_name = None
+                status = None
+                
+                # Try to get instance to check site_name
+                if service_class.is_ready():
+                    instance = service_class.get_instance()
+                    if instance:
+                        site_name = instance.site_name
+                        status = service_class.get_status()
+                else:
+                    # Check if auto cycle is running even if scraper not ready
+                    try:
+                        instance = service_class.get_instance()
+                        if instance:
+                            site_name = instance.site_name
+                            if instance.is_auto_cycle_running():
+                                status = {
+                                    'is_scraping': False,
+                                    'auto_cycle_running': True
+                                }
+                    except:
+                        pass
+                
+                # Add to status dict if we have a site_name
+                if site_name:
+                    status_dict[site_name] = status
+                    
+            except Exception as e:
+                logger.debug(f"Error getting status for {service_class.__name__}: {e}")
+                continue
 
-        # Get Kupatana status if instance exists
-        if KupatanaService.is_ready():
-            kupatana_status = KupatanaService.get_status()
-            if kupatana_status:
-                # Auto cycle status is already included in scraping_status
-                pass
-        else:
-            # Check if auto cycle is running even if scraper not ready
-            try:
-                kupatana_instance = KupatanaService.get_instance()
-                if kupatana_instance and kupatana_instance.is_auto_cycle_running():
-                    kupatana_status = {
-                        'is_scraping': False,
-                        'auto_cycle_running': True
-                    }
-            except:
-                pass
-
-        return {
-            "jiji": jiji_status,
-            "kupatana": kupatana_status
-        }
+        return status_dict
     except Exception as e:
         logger.error("Error getting scraping status: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
