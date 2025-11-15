@@ -277,8 +277,8 @@ class RuahaService(BaseScraperService):
                 logger.info(f"💾 Saved {saved_count} initial listings to database")
             
             # Progressive scroll + scrape (with progressive saving)
-            self._update_status_field('status', 'scrolling')
-            self._update_status_field('total_pages', max_pages)
+            # Keep status as 'scraping' (don't change to 'scrolling')
+            self._update_status_field('total_pages', max_pages, broadcast=False)
             self._broadcast_status()
             
             logger.info("Starting progressive scroll scraping...")
