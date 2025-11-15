@@ -11,6 +11,7 @@ from app.services.kupatana_service import KupatanaService
 from app.services.makazimapya_service import MakaziMapyaService
 from app.services.ruaha_service import RuahaService
 from app.services.sevenestate_service import SevenEstateService
+from app.services.beforward_service import BeForwardService
 import logging
 
 # Configure logging
@@ -61,43 +62,52 @@ def create_application() -> FastAPI:
         # Initialize scrapers with delay between each to avoid conflicts
         logger.info("Initializing scrapers...")
 
-        try:
-            JijiService.get_instance()
-        except Exception as e:
-            logger.error(f"✗ Failed to initialize Jiji scraper: {e}")
+        # try:
+        #     JijiService.get_instance()
+        # except Exception as e:
+        #     logger.error(f"✗ Failed to initialize Jiji scraper: {e}")
 
-        # Small delay before starting second browser to avoid conflicts
+        # # Small delay before starting second browser to avoid conflicts
+        # import asyncio
+        # await asyncio.sleep(3)
+
+        # try:
+        #     KupatanaService.get_instance()
+        # except Exception as e:
+        #     logger.error(f"✗ Failed to initialize Kupatana scraper: {e}")
+
+        # # Small delay before starting third browser to avoid conflicts
+        # await asyncio.sleep(3)
+
+        # try:
+        #     MakaziMapyaService.get_instance()
+        # except Exception as e:
+        #     logger.error(f"✗ Failed to initialize MakaziMapya scraper: {e}")
+
+        # # Small delay before starting fourth browser to avoid conflicts
+        # await asyncio.sleep(3)
+
+        # try:
+        #     RuahaService.get_instance()
+        # except Exception as e:
+        #     logger.error(f"✗ Failed to initialize Ruaha scraper: {e}")
+
+        # # Small delay before starting fifth browser to avoid conflicts
+        # await asyncio.sleep(3)
+
+        # try:
+        #     SevenEstateService.get_instance()
+        # except Exception as e:
+        #     logger.error(f"✗ Failed to initialize SevenEstate scraper: {e}")
+
+        # Small delay before starting sixth browser to avoid conflicts
         import asyncio
         await asyncio.sleep(3)
 
         try:
-            KupatanaService.get_instance()
+            BeForwardService.get_instance()
         except Exception as e:
-            logger.error(f"✗ Failed to initialize Kupatana scraper: {e}")
-
-        # Small delay before starting third browser to avoid conflicts
-        await asyncio.sleep(3)
-
-        try:
-            MakaziMapyaService.get_instance()
-        except Exception as e:
-            logger.error(f"✗ Failed to initialize MakaziMapya scraper: {e}")
-
-        # Small delay before starting fourth browser to avoid conflicts
-        await asyncio.sleep(3)
-
-        try:
-            RuahaService.get_instance()
-        except Exception as e:
-            logger.error(f"✗ Failed to initialize Ruaha scraper: {e}")
-
-        # Small delay before starting fifth browser to avoid conflicts
-        await asyncio.sleep(3)
-
-        try:
-            SevenEstateService.get_instance()
-        except Exception as e:
-            logger.error(f"✗ Failed to initialize SevenEstate scraper: {e}")
+            logger.error(f"✗ Failed to initialize BE FORWARD scraper: {e}")
 
         # Log scraper status
         jiji_status = "ready" if JijiService.is_ready() else "not initialized"
@@ -105,8 +115,9 @@ def create_application() -> FastAPI:
         makazimapya_status = "ready" if MakaziMapyaService.is_ready() else "not initialized"
         ruaha_status = "ready" if RuahaService.is_ready() else "not initialized"
         sevenestate_status = "ready" if SevenEstateService.is_ready() else "not initialized"
+        beforward_status = "ready" if BeForwardService.is_ready() else "not initialized"
         logger.info(
-            f"✓ Scraper status: jiji={jiji_status}, kupatana={kupatana_status}, makazimapya={makazimapya_status}, ruaha={ruaha_status}, sevenestate={sevenestate_status}")
+            f"✓ Scraper status: jiji={jiji_status}, kupatana={kupatana_status}, makazimapya={makazimapya_status}, ruaha={ruaha_status}, sevenestate={sevenestate_status}, beforward={beforward_status}")
 
     # Shutdown event
     @app.on_event("shutdown")
@@ -117,6 +128,7 @@ def create_application() -> FastAPI:
         MakaziMapyaService.close_instance()
         RuahaService.close_instance()
         SevenEstateService.close_instance()
+        BeForwardService.close_instance()
         logger.info("✓ Shutdown complete")
 
     # Root endpoint
@@ -132,7 +144,8 @@ def create_application() -> FastAPI:
                 "kupatana": "ready" if KupatanaService.is_ready() else "not initialized",
                 "makazimapya": "ready" if MakaziMapyaService.is_ready() else "not initialized",
                 "ruaha": "ready" if RuahaService.is_ready() else "not initialized",
-                "sevenestate": "ready" if SevenEstateService.is_ready() else "not initialized"
+                "sevenestate": "ready" if SevenEstateService.is_ready() else "not initialized",
+                "beforward": "ready" if BeForwardService.is_ready() else "not initialized"
             }
         }
 

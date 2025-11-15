@@ -11,6 +11,7 @@ from app.services.kupatana_service import KupatanaService
 from app.services.makazimapya_service import MakaziMapyaService
 from app.services.ruaha_service import RuahaService
 from app.services.sevenestate_service import SevenEstateService
+from app.services.beforward_service import BeForwardService
 from app.services.base_scraper_service import BaseScraperService
 from app.api.schemas.scraping import (
     ScrapeAllRequest,
@@ -29,11 +30,12 @@ logger = logging.getLogger(__name__)
 # Registry of available scraper services
 # Each service's site_name will be used to match against target_site
 SCRAPER_SERVICES: List[type[BaseScraperService]] = [
-    JijiService,
-    KupatanaService,
-    MakaziMapyaService,
-    RuahaService,
-    SevenEstateService,
+    # JijiService,
+    # KupatanaService,
+    # MakaziMapyaService,
+    # RuahaService,
+    # SevenEstateService,
+    BeForwardService,
 ]
 
 def get_scraper_service(target_site: str) -> Optional[BaseScraperService]:

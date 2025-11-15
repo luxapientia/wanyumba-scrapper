@@ -6,6 +6,7 @@ This service handles scraping real estate listings from sevenestate.co.tz
 import logging
 import re
 import time
+from datetime import datetime
 from typing import Dict, List, Optional
 from bs4 import BeautifulSoup
 from selenium.webdriver.common.by import By
@@ -421,7 +422,7 @@ class SevenEstateService(BaseScraperService):
             detailed_data = {
                 'raw_url': listing_url,
                 'source': self.site_name,
-                'scrape_timestamp': time.time(),
+                'scrape_timestamp': datetime.now(),
                 'status': 'active',  # Assume active if we can scrape it
                 'country': 'Tanzania',  # All Seven Estate listings are in Tanzania
             }
