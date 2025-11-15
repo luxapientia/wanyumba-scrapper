@@ -30,11 +30,11 @@ logger = logging.getLogger(__name__)
 # Registry of available scraper services
 # Each service's site_name will be used to match against target_site
 SCRAPER_SERVICES: List[type[BaseScraperService]] = [
-    # JijiService,
-    # KupatanaService,
-    # MakaziMapyaService,
-    # RuahaService,
-    # SevenEstateService,
+    JijiService,
+    KupatanaService,
+    MakaziMapyaService,
+    RuahaService,
+    SevenEstateService,
     BeForwardService,
 ]
 

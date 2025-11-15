@@ -62,43 +62,43 @@ def create_application() -> FastAPI:
         # Initialize scrapers with delay between each to avoid conflicts
         logger.info("Initializing scrapers...")
 
-        # try:
-        #     JijiService.get_instance()
-        # except Exception as e:
-        #     logger.error(f"✗ Failed to initialize Jiji scraper: {e}")
+        try:
+            JijiService.get_instance()
+        except Exception as e:
+            logger.error(f"✗ Failed to initialize Jiji scraper: {e}")
 
-        # # Small delay before starting second browser to avoid conflicts
-        # import asyncio
-        # await asyncio.sleep(3)
+        # Small delay before starting second browser to avoid conflicts
+        import asyncio
+        await asyncio.sleep(3)
 
-        # try:
-        #     KupatanaService.get_instance()
-        # except Exception as e:
-        #     logger.error(f"✗ Failed to initialize Kupatana scraper: {e}")
+        try:
+            KupatanaService.get_instance()
+        except Exception as e:
+            logger.error(f"✗ Failed to initialize Kupatana scraper: {e}")
 
-        # # Small delay before starting third browser to avoid conflicts
-        # await asyncio.sleep(3)
+        # Small delay before starting third browser to avoid conflicts
+        await asyncio.sleep(3)
 
-        # try:
-        #     MakaziMapyaService.get_instance()
-        # except Exception as e:
-        #     logger.error(f"✗ Failed to initialize MakaziMapya scraper: {e}")
+        try:
+            MakaziMapyaService.get_instance()
+        except Exception as e:
+            logger.error(f"✗ Failed to initialize MakaziMapya scraper: {e}")
 
-        # # Small delay before starting fourth browser to avoid conflicts
-        # await asyncio.sleep(3)
+        # Small delay before starting fourth browser to avoid conflicts
+        await asyncio.sleep(3)
 
-        # try:
-        #     RuahaService.get_instance()
-        # except Exception as e:
-        #     logger.error(f"✗ Failed to initialize Ruaha scraper: {e}")
+        try:
+            RuahaService.get_instance()
+        except Exception as e:
+            logger.error(f"✗ Failed to initialize Ruaha scraper: {e}")
 
-        # # Small delay before starting fifth browser to avoid conflicts
-        # await asyncio.sleep(3)
+        # Small delay before starting fifth browser to avoid conflicts
+        await asyncio.sleep(3)
 
-        # try:
-        #     SevenEstateService.get_instance()
-        # except Exception as e:
-        #     logger.error(f"✗ Failed to initialize SevenEstate scraper: {e}")
+        try:
+            SevenEstateService.get_instance()
+        except Exception as e:
+            logger.error(f"✗ Failed to initialize SevenEstate scraper: {e}")
 
         # Small delay before starting sixth browser to avoid conflicts
         import asyncio
