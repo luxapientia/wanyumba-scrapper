@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     RUAHA_PROFILE_DIR: str = "./ruaha_browser_profile"
     SEVENESTATE_PROFILE_DIR: str = "./sevenestate_browser_profile"
     BEFORWARD_PROFILE_DIR: str = "./beforward_browser_profile"
+    IPH_PROFILE_DIR: str = "./iph_browser_profile"
 
     # API Settings
     API_HOST: str = "0.0.0.0"

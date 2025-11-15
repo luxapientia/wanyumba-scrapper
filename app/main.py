@@ -1,6 +1,8 @@
 """
 FastAPI application instance
 """
+import asyncio
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
@@ -12,7 +14,7 @@ from app.services.makazimapya_service import MakaziMapyaService
 from app.services.ruaha_service import RuahaService
 from app.services.sevenestate_service import SevenEstateService
 from app.services.beforward_service import BeForwardService
-import logging
+from app.services.iph_service import IPHService
 
 # Configure logging
 logging.basicConfig(
@@ -109,6 +111,14 @@ def create_application() -> FastAPI:
         except Exception as e:
             logger.error(f"✗ Failed to initialize BE FORWARD scraper: {e}")
 
+        # Small delay before starting seventh browser to avoid conflicts
+        await asyncio.sleep(3)
+
+        try:
+            IPHService.get_instance()
+        except Exception as e:
+            logger.error(f"✗ Failed to initialize IPH scraper: {e}")
+
         # Log scraper status
         jiji_status = "ready" if JijiService.is_ready() else "not initialized"
         kupatana_status = "ready" if KupatanaService.is_ready() else "not initialized"
@@ -116,8 +126,9 @@ def create_application() -> FastAPI:
         ruaha_status = "ready" if RuahaService.is_ready() else "not initialized"
         sevenestate_status = "ready" if SevenEstateService.is_ready() else "not initialized"
         beforward_status = "ready" if BeForwardService.is_ready() else "not initialized"
+        iph_status = "ready" if IPHService.is_ready() else "not initialized"
         logger.info(
-            f"✓ Scraper status: jiji={jiji_status}, kupatana={kupatana_status}, makazimapya={makazimapya_status}, ruaha={ruaha_status}, sevenestate={sevenestate_status}, beforward={beforward_status}")
+            f"✓ Scraper status: jiji={jiji_status}, kupatana={kupatana_status}, makazimapya={makazimapya_status}, ruaha={ruaha_status}, sevenestate={sevenestate_status}, beforward={beforward_status}, iph={iph_status}")
 
     # Shutdown event
     @app.on_event("shutdown")
@@ -129,6 +140,7 @@ def create_application() -> FastAPI:
         RuahaService.close_instance()
         SevenEstateService.close_instance()
         BeForwardService.close_instance()
+        IPHService.close_instance()
         logger.info("✓ Shutdown complete")
 
     # Root endpoint
@@ -145,7 +157,8 @@ def create_application() -> FastAPI:
                 "makazimapya": "ready" if MakaziMapyaService.is_ready() else "not initialized",
                 "ruaha": "ready" if RuahaService.is_ready() else "not initialized",
                 "sevenestate": "ready" if SevenEstateService.is_ready() else "not initialized",
-                "beforward": "ready" if BeForwardService.is_ready() else "not initialized"
+                "beforward": "ready" if BeForwardService.is_ready() else "not initialized",
+                "iph": "ready" if IPHService.is_ready() else "not initialized"
             }
         }
 

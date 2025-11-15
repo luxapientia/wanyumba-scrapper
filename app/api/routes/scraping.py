@@ -12,6 +12,7 @@ from app.services.makazimapya_service import MakaziMapyaService
 from app.services.ruaha_service import RuahaService
 from app.services.sevenestate_service import SevenEstateService
 from app.services.beforward_service import BeForwardService
+from app.services.iph_service import IPHService
 from app.services.base_scraper_service import BaseScraperService
 from app.api.schemas.scraping import (
     ScrapeAllRequest,
@@ -36,6 +37,7 @@ SCRAPER_SERVICES: List[type[BaseScraperService]] = [
     RuahaService,
     SevenEstateService,
     BeForwardService,
+    IPHService,
 ]
 
 def get_scraper_service(target_site: str) -> Optional[BaseScraperService]:
