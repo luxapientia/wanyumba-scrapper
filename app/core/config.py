@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     KUPATANA_PROFILE_DIR: str = "./kupatana_browser_profile"
     MAKAZIMAPYA_PROFILE_DIR: str = "./makazimapya_browser_profile"
     RUAHA_PROFILE_DIR: str = "./ruaha_browser_profile"
+    SEVENESTATE_PROFILE_DIR: str = "./sevenestate_browser_profile"
 
     # API Settings
     API_HOST: str = "0.0.0.0"

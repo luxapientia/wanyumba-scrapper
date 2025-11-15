@@ -10,6 +10,7 @@ from app.services.jiji_service import JijiService
 from app.services.kupatana_service import KupatanaService
 from app.services.makazimapya_service import MakaziMapyaService
 from app.services.ruaha_service import RuahaService
+from app.services.sevenestate_service import SevenEstateService
 from app.services.base_scraper_service import BaseScraperService
 from app.api.schemas.scraping import (
     ScrapeAllRequest,
@@ -32,6 +33,7 @@ SCRAPER_SERVICES: List[type[BaseScraperService]] = [
     KupatanaService,
     MakaziMapyaService,
     RuahaService,
+    SevenEstateService,
 ]
 
 def get_scraper_service(target_site: str) -> Optional[BaseScraperService]:

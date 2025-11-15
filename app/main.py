@@ -10,6 +10,7 @@ from app.services.jiji_service import JijiService
 from app.services.kupatana_service import KupatanaService
 from app.services.makazimapya_service import MakaziMapyaService
 from app.services.ruaha_service import RuahaService
+from app.services.sevenestate_service import SevenEstateService
 import logging
 
 # Configure logging
@@ -90,13 +91,22 @@ def create_application() -> FastAPI:
         except Exception as e:
             logger.error(f"✗ Failed to initialize Ruaha scraper: {e}")
 
+        # Small delay before starting fifth browser to avoid conflicts
+        await asyncio.sleep(3)
+
+        try:
+            SevenEstateService.get_instance()
+        except Exception as e:
+            logger.error(f"✗ Failed to initialize SevenEstate scraper: {e}")
+
         # Log scraper status
         jiji_status = "ready" if JijiService.is_ready() else "not initialized"
         kupatana_status = "ready" if KupatanaService.is_ready() else "not initialized"
         makazimapya_status = "ready" if MakaziMapyaService.is_ready() else "not initialized"
         ruaha_status = "ready" if RuahaService.is_ready() else "not initialized"
+        sevenestate_status = "ready" if SevenEstateService.is_ready() else "not initialized"
         logger.info(
-            f"✓ Scraper status: jiji={jiji_status}, kupatana={kupatana_status}, makazimapya={makazimapya_status}, ruaha={ruaha_status}")
+            f"✓ Scraper status: jiji={jiji_status}, kupatana={kupatana_status}, makazimapya={makazimapya_status}, ruaha={ruaha_status}, sevenestate={sevenestate_status}")
 
     # Shutdown event
     @app.on_event("shutdown")
@@ -106,6 +116,7 @@ def create_application() -> FastAPI:
         KupatanaService.close_instance()
         MakaziMapyaService.close_instance()
         RuahaService.close_instance()
+        SevenEstateService.close_instance()
         logger.info("✓ Shutdown complete")
 
     # Root endpoint
@@ -120,7 +131,8 @@ def create_application() -> FastAPI:
                 "jiji": "ready" if JijiService.is_ready() else "not initialized",
                 "kupatana": "ready" if KupatanaService.is_ready() else "not initialized",
                 "makazimapya": "ready" if MakaziMapyaService.is_ready() else "not initialized",
-                "ruaha": "ready" if RuahaService.is_ready() else "not initialized"
+                "ruaha": "ready" if RuahaService.is_ready() else "not initialized",
+                "sevenestate": "ready" if SevenEstateService.is_ready() else "not initialized"
             }
         }
 
