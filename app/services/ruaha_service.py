@@ -96,6 +96,7 @@ class RuahaService(BaseScraperService):
         """Stop current scraping operation"""
         if cls._instance is not None:
             cls._instance.should_stop = True
+            cls._instance.is_scraping = False  # Immediately reset the flag
             logger.info("Stop signal sent to Ruaha scraper")
 
     def wait_for_page_load(self, timeout: int = 10):

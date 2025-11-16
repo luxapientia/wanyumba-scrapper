@@ -113,6 +113,7 @@ class MakaziMapyaService(BaseScraperService):
         """Stop the current scraping operation"""
         if cls._instance:
             cls._instance.should_stop = True
+            cls._instance.is_scraping = False  # Immediately reset the flag
             logger.info("Stop flag set for MakaziMapya scraper")
 
     def wait_for_page_load(self, timeout: int = 15):

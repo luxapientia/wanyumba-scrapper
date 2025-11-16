@@ -120,6 +120,7 @@ class BaseScraperService(ABC):
         """
         if hasattr(cls, '_instance') and cls._instance:
             cls._instance.should_stop = True
+            cls._instance.is_scraping = False  # Immediately reset the flag
             logger.info(f"Stop flag set for {cls.__name__} scraper")
 
     def _check_should_stop(self) -> bool:

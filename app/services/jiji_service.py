@@ -118,6 +118,7 @@ class JijiService(BaseScraperService):
         """Stop the current scraping operation"""
         if cls._instance:
             cls._instance.should_stop = True
+            cls._instance.is_scraping = False  # Immediately reset the flag
             logger.info("Stop flag set for Jiji scraper")
 
     def has_cloudflare_challenge(self) -> bool:
