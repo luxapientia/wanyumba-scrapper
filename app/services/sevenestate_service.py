@@ -432,23 +432,29 @@ class SevenEstateService(BaseScraperService):
             if title_elem:
                 detailed_data['title'] = title_elem.get_text(strip=True)
             
-            # Extract location and parse it
-            location_elem = soup.find('a', href='#')
-            if location_elem and location_elem.find(class_='fa-map-marker'):
-                location_text = location_elem.get_text(strip=True)
-                detailed_data['address_text'] = location_text
-                
-                # Parse location (e.g., "Mbezi Beach, Dar-es-Salaam")
-                if ', ' in location_text:
-                    parts = [p.strip() for p in location_text.split(',')]
-                    if len(parts) >= 2:
-                        detailed_data['district'] = parts[0]
-                        detailed_data['city'] = parts[1]
-                        detailed_data['region'] = parts[1]  # City is typically the region in Tanzania
-                    elif len(parts) == 1:
-                        detailed_data['city'] = parts[0]
-                else:
-                    detailed_data['city'] = location_text
+            # Extract location from geodir-category-location
+            # Look for the location in div with class geodir-category-location
+            location_elem = soup.find('div', class_='geodir-category-location')
+            if location_elem:
+                # Find the anchor with map marker icon
+                location_anchor = location_elem.find('a')
+                if location_anchor:
+                    location_text = location_anchor.get_text(strip=True)
+                    detailed_data['address_text'] = location_text
+                    
+                    # Parse location (e.g., "Mbezi Beach, Dar-es-Salaam")
+                    if ',' in location_text:
+                        parts = [p.strip() for p in location_text.split(',')]
+                        if len(parts) >= 2:
+                            detailed_data['district'] = parts[0]
+                            detailed_data['city'] = parts[1]
+                            detailed_data['region'] = parts[1]  # City is typically the region in Tanzania
+                        elif len(parts) == 1:
+                            detailed_data['city'] = parts[0]
+                            detailed_data['region'] = parts[0]
+                    else:
+                        detailed_data['city'] = location_text
+                        detailed_data['region'] = location_text
             
             # Extract price and currency
             price_elem = soup.find('strong', text=re.compile(r'Price:'))

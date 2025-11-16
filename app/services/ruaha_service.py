@@ -357,8 +357,13 @@ class RuahaService(BaseScraperService):
                 price, price_currency = self.parse_price(price_text)
             
             # Extract location
-            location_elem = card.find('img', alt=re.compile(r'location', re.I))
+            # Look for location icon (can be img or svg)
             location = None
+            location_elem = card.find('img', alt=re.compile(r'location', re.I))
+            if not location_elem:
+                # Try finding svg with location-related data-icon
+                location_elem = card.find('svg', {'data-icon': re.compile(r'location|pin', re.I)})
+            
             if location_elem:
                 location_text = location_elem.find_next(string=True)
                 if location_text:
@@ -480,23 +485,31 @@ class RuahaService(BaseScraperService):
                 elif 'night' in price_text.lower():
                     price_period = "night"
             
-            # Extract location
+            # Extract location from info-list
+            # Look for li containing location-pin icon
             location = None
             city = None
             district = None
             region = None
             country = "Tanzania"
             
-            location_elem = soup.find(string=re.compile(r'^\s*[A-Z][a-z]+,\s*[A-Z]'))
-            if location_elem:
-                location = location_elem.strip()
-                # Parse location (e.g., "Kizota, Dodoma")
-                parts = [p.strip() for p in location.split(',')]
-                if len(parts) >= 2:
-                    district = parts[0]
-                    city = parts[1]
-                elif len(parts) == 1:
-                    city = parts[0]
+            info_list = soup.find('ul', class_='info-list')
+            if info_list:
+                # Find the li with location-pin icon
+                location_li = info_list.find('svg', {'data-icon': 'location-pin'})
+                if location_li and location_li.parent:
+                    location_text = location_li.parent.get_text(strip=True)
+                    location = location_text
+                    
+                    # Parse location (e.g., "Oyster Bay, Dar es Salaam" or "Kizota, Dodoma")
+                    parts = [p.strip() for p in location.split(',') if p.strip()]
+                    if len(parts) >= 2:
+                        district = parts[0]
+                        city = parts[1]
+                        region = parts[1]  # City is also the region in Tanzania
+                    elif len(parts) == 1:
+                        city = parts[0]
+                        region = parts[0]
             
             # Extract features
             features_section = soup.find(string=re.compile(r'Features', re.I))
