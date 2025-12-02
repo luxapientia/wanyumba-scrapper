@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+        extra = "ignore"  # Ignore extra environment variables (e.g., POSTGRES_USER for docker-compose)
 
 
 # Global settings instance
