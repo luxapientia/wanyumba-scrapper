@@ -3,6 +3,7 @@ Application configuration management
 """
 import os
 from typing import Optional, List
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -14,11 +15,22 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
 
-    # Database
-    DATABASE_URL: str = os.getenv(
-        'DATABASE_URL',
-        'postgresql://postgres:postgres@localhost:5432/real_estate_db'
-    )
+    # Database - Individual components
+    POSTGRES_USER: str = 'wanyumba'
+    POSTGRES_PASSWORD: str = 'password'
+    POSTGRES_DB: str = 'real_estate_scrapper'
+    POSTGRES_HOST: str = 'localhost'
+    POSTGRES_PORT: str = '5443'
+    
+    # Database - Constructed URL (can be overridden via DATABASE_URL env var)
+    DATABASE_URL: Optional[str] = None
+    
+    @model_validator(mode='after')
+    def construct_database_url(self):
+        """Construct DATABASE_URL from individual components if not explicitly set"""
+        if not self.DATABASE_URL:
+            self.DATABASE_URL = f'postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}'
+        return self
 
     # Scraper Settings
     JIJI_EMAIL: Optional[str] = None

@@ -8,9 +8,60 @@ import logging
 import os
 import threading
 import time
+import subprocess
+import re
 import undetected_chromedriver as uc
 
 logger = logging.getLogger(__name__)
+
+
+def get_chrome_version() -> Optional[int]:
+    """
+    Detect Chrome browser version on Windows
+    
+    Returns:
+        Major version number (e.g., 142) or None if detection fails
+    """
+    try:
+        result = subprocess.run(
+            ['reg', 'query', 'HKEY_CURRENT_USER\\Software\\Google\\Chrome\\BLBeacon', '/v', 'version'],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        version_match = re.search(r'version\s+REG_SZ\s+(\d+)\.', result.stdout)
+        if version_match:
+            return int(version_match.group(1))
+    except Exception:
+        pass
+    
+    try:
+        result = subprocess.run(
+            ['powershell', '-Command', '(Get-Item "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe").VersionInfo.FileVersion'],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        version_match = re.search(r'^(\d+)\.', result.stdout.strip())
+        if version_match:
+            return int(version_match.group(1))
+    except Exception:
+        pass
+    
+    try:
+        result = subprocess.run(
+            ['powershell', '-Command', '(Get-Item "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe").VersionInfo.FileVersion'],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        version_match = re.search(r'^(\d+)\.', result.stdout.strip())
+        if version_match:
+            return int(version_match.group(1))
+    except Exception:
+        pass
+    
+    return None
 
 
 class BaseScraperService(ABC):
@@ -850,7 +901,13 @@ class BaseScraperService(ABC):
             logger.info(f"Using browser profile: {profile_path}")
 
         try:
-            self.driver = uc.Chrome(options=options, version_main=None)
+            chrome_version = get_chrome_version()
+            if chrome_version:
+                logger.info(f"Detected Chrome version: {chrome_version}")
+                self.driver = uc.Chrome(options=options, version_main=chrome_version)
+            else:
+                logger.warning("Could not detect Chrome version, using auto-detection")
+                self.driver = uc.Chrome(options=options, version_main=None)
 
             if not self.headless:
                 self.driver.maximize_window()
